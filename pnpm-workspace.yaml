@@ -1,0 +1,8 @@
+allowBuilds:
+  nx: true
+  esbuild: true
+  lmdb: false
+  msgpackr-extract: false
+  '@parcel/watcher': false
+  unrs-resolver: false
+  '@swc/core': false
