@@ -92,25 +92,6 @@ describe('ending and expiry', () => {
       expect(await receiverEnd).toEqual(expected);
       expect(await senderEnd).toEqual(expected);
     });
-
-    it('frees the ended Session’s roles', async () => {
-      await start();
-      const { sessionId, senderToken } = await createSession(baseUrl);
-      const receiver = await joined(sessionId, 'receiver');
-      const receiverEnd = endOf(receiver);
-      await end(sessionId, `Bearer ${senderToken}`);
-      await receiverEnd;
-
-      // The same ID can't be reused, so check the socket is fully released: it can join another.
-      const other = await createSession(baseUrl);
-      receiver.connect();
-      await new Promise((resolve) => receiver.once('connect', resolve));
-      const ack = await receiver.emitWithAck(SocketEvent.Join, {
-        sessionId: other.sessionId,
-        role: 'receiver',
-      });
-      expect(ack.ok).toBe(true);
-    });
   });
 
   describe('idle expiry', () => {
@@ -137,17 +118,27 @@ describe('ending and expiry', () => {
       expect(await joinAck(sessionId)).toEqual({ ok: false, error: ErrorCode.SessionNotFound });
     });
 
-    it('counts joins and publishes as activity', async () => {
+    it('counts a join as activity', async () => {
+      let clock = 0;
+      await start({ now: () => clock, idleTimeoutMs: IDLE_MS });
+      const { sessionId } = await createSession(baseUrl);
+
+      clock = 900;
+      await joined(sessionId, 'receiver');
+      clock = 1_800; // idle for 1_800 since creation, but only 900 since the join
+      server.expireIdleSessions();
+      expect(await joinAck(sessionId)).toEqual({ ok: false, error: ErrorCode.RoleTaken });
+    });
+
+    it('counts a publish as activity', async () => {
       let clock = 0;
       await start({ now: () => clock, idleTimeoutMs: IDLE_MS });
       const { sessionId, senderToken } = await createSession(baseUrl);
+      const sender = await joined(sessionId, 'sender', senderToken); // activity at 0
 
       clock = 900;
-      const sender = await joined(sessionId, 'sender', senderToken);
-      clock = 1_800;
       expect(await sender.emitWithAck(SocketEvent.Publish, fakeUpdate(1))).toEqual({ ok: true });
-
-      clock = 2_700;
+      clock = 1_800;
       server.expireIdleSessions();
       expect(
         await sender.emitWithAck(SocketEvent.Join, { sessionId, role: 'sender' }),

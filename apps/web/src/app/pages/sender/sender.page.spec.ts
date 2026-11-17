@@ -14,7 +14,7 @@ const token = 'T'.repeat(43);
 async function open(url: string, joinResponse?: () => JoinAck) {
   const transport = new FakeTransport();
   const auths: TransportAuth[] = [];
-  const endSession = vi.fn(async (): Promise<void> => undefined);
+  const endSession = vi.fn(async (): Promise<'ended' | 'not-found'> => 'ended');
   if (joinResponse) transport.joinResponse = joinResponse;
   TestBed.configureTestingModule({
     providers: [

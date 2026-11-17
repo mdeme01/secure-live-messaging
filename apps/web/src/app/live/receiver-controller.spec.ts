@@ -225,6 +225,7 @@ describe('ReceiverController', () => {
 
       expect(controller.status()).toBe('ended');
       expect(controller.endedReason()).toBe(reason);
+      expect(controller.message()).toBeNull();
       expect(transport.closed).toBe(true);
       transport.simulateConnect();
       expect(transport.joins).toHaveLength(1);

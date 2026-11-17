@@ -201,7 +201,7 @@ export class SenderPage {
       new SenderController({
         link,
         transport: inject(LIVE_TRANSPORT)({ senderToken: link.senderToken }),
-        endSession: () => api.endSession(link.sessionId, link.senderToken),
+        endSession: () => api.endSession(link),
       });
 
     if (this.controller) {

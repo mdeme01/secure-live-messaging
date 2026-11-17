@@ -41,11 +41,14 @@ const TERMINAL: ReadonlySet<SenderStatus> = new Set([
   'unverifiable',
 ]);
 
+/** 'not-found': the Session was already gone (e.g. it expired) when the Sender ended it. */
+export type EndSessionResult = 'ended' | 'not-found';
+
 export interface SenderControllerDeps {
   link: SenderLink;
   transport: LiveTransport;
   /** Deletes the Session on the server (authorized by the Sender Token). */
-  endSession?: () => Promise<void>;
+  endSession: () => Promise<EndSessionResult>;
   now?: () => Date;
 }
 
@@ -80,7 +83,7 @@ export class SenderController {
 
   private readonly link: SenderLink;
   private readonly transport: LiveTransport;
-  private readonly endSession?: () => Promise<void>;
+  private readonly endSession: () => Promise<EndSessionResult>;
   private readonly now: () => Date;
   private key?: CryptoKey;
   /** Text and Sequence Number of the latest Update the server is known to hold. */
@@ -147,18 +150,26 @@ export class SenderController {
 
   /** Deletes the Session for good. On failure the Session stays live and `endFailed` is set. */
   async end(): Promise<void> {
-    if (!this.endSession || this.stopped() || this.ending()) return;
+    if (this.stopped() || this.ending()) return;
+    // Freeze the editor: anything typed now would be deleted with the Session unseen.
+    const wasEditable = this.editable();
+    this.editable.set(false);
+    clearTimeout(this.timer);
+    this.timer = undefined;
     this.ending.set(true);
     this.endFailed.set(false);
+    let result: EndSessionResult;
     try {
-      await this.endSession();
+      result = await this.endSession();
     } catch {
       this.endFailed.set(true);
+      if (!this.stopped()) this.editable.set(wasEditable);
       return;
     } finally {
       this.ending.set(false);
     }
-    this.ended('ended-by-sender');
+    if (result === 'not-found') this.stop('not-found');
+    else this.ended('ended-by-sender');
   }
 
   dispose(): void {

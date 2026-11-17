@@ -7,6 +7,7 @@ import {
   LIMITS,
   PROTOCOL_VERSION,
   SOCKET_PATH,
+  type EndReason,
   type HealthResponse,
 } from '@slm/protocol';
 import { sendError } from './http-errors';
@@ -38,7 +39,7 @@ export interface AppServer {
   io: LiveServer;
   /** Start listening; resolves with the bound address (use port 0 for a random port). */
   listen(port: number, host?: string): Promise<string>;
-  /** Deletes idle Sessions now and tells their parties (also runs on a timer). */
+  /** Runs the idle-expiry sweep now; it also runs on a timer. Exposed for tests. */
   expireIdleSessions(): void;
   close(): Promise<void>;
 }
@@ -78,10 +79,15 @@ export function buildServer(options: ServerOptions = {}): AppServer {
     protocol: PROTOCOL_VERSION,
   }));
   const live = registerLiveHandlers(io, store);
-  registerSessionRoutes(http, store, live);
+  /** Every way a Session ends goes through here, so its parties are always told. */
+  const endSession = (sessionId: string, reason: EndReason) => {
+    store.delete(sessionId); // A no-op for expired ones, which expireIdle already removed.
+    live.endSession(sessionId, reason);
+  };
+  registerSessionRoutes(http, store, endSession);
 
   const expireIdleSessions = () => {
-    for (const sessionId of store.expireIdle()) live.endSession(sessionId, 'expired');
+    for (const sessionId of store.expireIdle()) endSession(sessionId, 'expired');
   };
   const sweep = setInterval(expireIdleSessions, EXPIRY_SWEEP_INTERVAL_MS);
   sweep.unref();

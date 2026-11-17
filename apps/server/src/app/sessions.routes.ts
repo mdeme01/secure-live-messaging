@@ -7,10 +7,10 @@ import {
   validateSealedUpdate,
   type CreateSessionRequest,
   type CreateSessionResponse,
+  type EndReason,
   type ErrorResponse,
 } from '@slm/protocol';
 import { sendError } from './http-errors';
-import type { LiveChannel } from './live.handlers';
 import type { SessionStore } from './session-store';
 
 const BEARER = /^Bearer (\S+)$/;
@@ -18,7 +18,8 @@ const BEARER = /^Bearer (\S+)$/;
 export function registerSessionRoutes(
   http: FastifyInstance,
   store: SessionStore,
-  live: LiveChannel,
+  /** Deletes the Session and tells its connected parties. */
+  endSession: (sessionId: string, reason: EndReason) => void,
 ): void {
   http.post<{ Body: CreateSessionRequest; Reply: CreateSessionResponse | ErrorResponse }>(
     SESSIONS_PATH,
@@ -47,8 +48,7 @@ export function registerSessionRoutes(
     if (!isSenderToken(token) || !store.isSender(id, token)) {
       return sendError(reply, ErrorCode.Unauthorized);
     }
-    store.delete(id);
-    live.endSession(id, 'ended-by-sender');
+    endSession(id, 'ended-by-sender');
     return reply.code(204).send();
   });
 }

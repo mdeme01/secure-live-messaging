@@ -84,6 +84,7 @@ export class ReceiverController {
     this.transport.onUpdate((update) => void this.enqueue(update));
     this.transport.onEnded(({ reason }) => {
       this.endedReason.set(reason);
+      this.message.set(null); // Don't keep the plaintext around once the Session is gone.
       this.status.set('ended');
       this.stop();
     });

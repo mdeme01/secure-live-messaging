@@ -1,18 +1,15 @@
 import { generateSessionKey, MAX_MESSAGE_BYTES, openUpdate, sealUpdate } from '@slm/crypto';
 import { ErrorCode, type PublishAck, type SealedUpdate } from '@slm/protocol';
-import { SenderController, DEBOUNCE_MS } from './sender-controller';
+import { SenderController, DEBOUNCE_MS, type EndSessionResult } from './sender-controller';
 import { FIRST_JOIN_RETRY_DELAYS_MS, UNANSWERED_JOIN_RETRY_MS } from './join-session';
 import { FakeTransport } from './testing/fake-transport';
 
 const SESSION_ID = 'abcDEF0123456789_-xyzA';
 const TOKEN = 'T'.repeat(43);
 const NOW = new Date('2026-01-01T10:00:00Z');
+const endedOk = async (): Promise<EndSessionResult> => 'ended';
 
-async function setup({
-  latestText = '',
-  latestSeq = 0,
-  endSession = async (): Promise<void> => undefined,
-} = {}) {
+async function setup({ latestText = '', latestSeq = 0, endSession = endedOk } = {}) {
   const { encoded, key } = await generateSessionKey();
   let latest: SealedUpdate = await sealUpdate(key, SESSION_ID, latestSeq, latestText);
 
@@ -192,7 +189,7 @@ describe('SenderController', () => {
   });
 
   it('ends the Session on request and stops', async () => {
-    const endSession = vi.fn(async (): Promise<void> => undefined);
+    const endSession = vi.fn(endedOk);
     const { controller, transport } = await setup({ endSession });
 
     await controller.end();
@@ -202,6 +199,25 @@ describe('SenderController', () => {
     expect(controller.endedReason()).toBe('ended-by-sender');
     expect(controller.editable()).toBe(false);
     expect(transport.closed).toBe(true);
+  });
+
+  it('freezes the editor while ending, so nothing typed meanwhile is lost unseen', async () => {
+    let finish!: (result: EndSessionResult) => void;
+    const { controller } = await setup({
+      endSession: () => new Promise<EndSessionResult>((resolve) => (finish = resolve)),
+    });
+    const ending = controller.end();
+    expect(controller.editable()).toBe(false);
+    finish('ended');
+    await ending;
+    expect(controller.status()).toBe('ended');
+  });
+
+  it('shows the Session as gone when it had already expired before being ended', async () => {
+    const { controller } = await setup({ endSession: async () => 'not-found' });
+    await controller.end();
+    expect(controller.status()).toBe('not-found');
+    expect(controller.endedReason()).toBeNull();
   });
 
   it('stays usable and reports it when ending the Session fails', async () => {
@@ -262,6 +278,7 @@ describe('SenderController', () => {
     const controller = new SenderController({
       link: { sessionId: SESSION_ID, sessionKey: encoded, senderToken: TOKEN },
       transport,
+      endSession: endedOk,
     });
     await controller.start();
 
@@ -283,6 +300,7 @@ describe('SenderController', () => {
     const controller = new SenderController({
       link: { sessionId: SESSION_ID, sessionKey: encoded, senderToken: TOKEN },
       transport,
+      endSession: endedOk,
     });
     await controller.start();
     await vi.advanceTimersByTimeAsync(FIRST_JOIN_RETRY_DELAYS_MS[0]);
@@ -421,6 +439,7 @@ describe('SenderController', () => {
     const controller = new SenderController({
       link: { sessionId: SESSION_ID, sessionKey: encoded, senderToken: TOKEN },
       transport,
+      endSession: endedOk,
     });
     await controller.start();
     await vi.waitFor(() => expect(controller.receiverConnected()).toBe(true));
