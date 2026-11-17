@@ -46,7 +46,14 @@ const STATUS_LABEL: Record<ReceiverStatus, string> = {
         </div>
         @switch (controller.message()) {
           @case (null) {
-            <p class="mt-6 text-slate-500">Loading the message…</p>
+            @if (controller.integrityFailure()) {
+              <p role="alert" class="mt-6 rounded-lg bg-red-50 px-3 py-2 text-red-800">
+                The message couldn't be verified. The link may be wrong, or the data was altered on
+                the way. Nothing unverified is shown.
+              </p>
+            } @else {
+              <p class="mt-6 text-slate-500">Loading the message…</p>
+            }
           }
           @case ('') {
             <p data-testid="empty-message" class="mt-6 italic text-slate-500">
@@ -79,7 +86,7 @@ export class ReceiverPage {
 
     if (this.controller) {
       const controller = this.controller;
-      controller.start().catch(() => controller.status.set('error'));
+      void controller.start();
       inject(DestroyRef).onDestroy(() => controller.dispose());
     }
   }

@@ -1,5 +1,5 @@
 import { generateSessionKey, sealUpdate } from '@slm/crypto';
-import { ErrorCode, type SealedUpdate } from '@slm/protocol';
+import { ErrorCode, type JoinAck, type SealedUpdate } from '@slm/protocol';
 import { ReceiverController } from './receiver-controller';
 import { FakeTransport } from './testing/fake-transport';
 
@@ -124,5 +124,43 @@ describe('ReceiverController', () => {
     await vi.waitFor(() => expect(controller.status()).toBe('not-found'));
     expect(transport.closed).toBe(true);
     expect(controller.message()).toBeNull();
+  });
+
+  it('does not connect if disposed while still starting', async () => {
+    const { encoded } = await generateSessionKey();
+    const transport = new FakeTransport();
+    const controller = new ReceiverController({
+      link: { sessionId: SESSION_ID, sessionKey: encoded },
+      transport,
+    });
+
+    const starting = controller.start();
+    controller.dispose();
+    await starting;
+
+    expect(transport.joins).toHaveLength(0);
+    expect(transport.connected).toBe(false);
+  });
+
+  it('does not report Live for a join that completes after the connection dropped', async () => {
+    const { encoded, key } = await generateSessionKey();
+    const latest = await sealUpdate(key, SESSION_ID, 0, '');
+    const transport = new FakeTransport();
+    let answer!: (ack: JoinAck) => void;
+    transport.join = (request) => {
+      transport.joins.push(request);
+      return new Promise((resolve) => (answer = resolve));
+    };
+    const controller = new ReceiverController({
+      link: { sessionId: SESSION_ID, sessionKey: encoded },
+      transport,
+    });
+    await controller.start();
+
+    transport.simulateDisconnect();
+    answer({ ok: true, latest });
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(controller.status()).toBe('connecting');
   });
 });

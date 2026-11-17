@@ -34,6 +34,9 @@ export class ReceiverController {
   private readonly now: () => Date;
   private key?: CryptoKey;
   private lastAcceptedSeq: number | null = null;
+  private disposed = false;
+  /** Bumped on every (dis)connect so a slow join can tell it has been overtaken. */
+  private connection = 0;
   /** Opening is async; chaining keeps Updates verified in arrival order. */
   private queue: Promise<void> = Promise.resolve();
 
@@ -44,32 +47,49 @@ export class ReceiverController {
   }
 
   async start(): Promise<void> {
-    this.key = await importSessionKey(this.link.sessionKey);
-    this.transport.onConnect(() => void this.join());
+    try {
+      this.key = await importSessionKey(this.link.sessionKey);
+    } catch {
+      this.status.set('error');
+      return;
+    }
+    if (this.disposed) return;
+    this.transport.onConnect(() => void this.join(++this.connection));
     this.transport.onDisconnect(() => {
-      if (this.status() === 'live') this.status.set('reconnecting');
+      this.connection++;
+      if (this.status() === 'live' || this.status() === 'connecting') {
+        this.status.set(this.status() === 'live' ? 'reconnecting' : 'connecting');
+      }
     });
     this.transport.onUpdate((update) => void this.enqueue(update));
     this.transport.connect();
   }
 
   dispose(): void {
+    this.disposed = true;
     this.transport.close();
   }
 
-  private async join(): Promise<void> {
-    const ack = await this.transport.join({ sessionId: this.link.sessionId, role: 'receiver' });
+  private async join(connection: number): Promise<void> {
+    let ack;
+    try {
+      ack = await this.transport.join({ sessionId: this.link.sessionId, role: 'receiver' });
+    } catch {
+      return; // The next reconnect joins again.
+    }
+    if (connection !== this.connection) return;
     if (!ack.ok) {
       this.status.set(ack.error === ErrorCode.SessionNotFound ? 'not-found' : 'error');
       this.transport.close();
       return;
     }
     await this.enqueue(ack.latest);
-    this.status.set('live');
+    if (connection === this.connection) this.status.set('live');
   }
 
   private enqueue(update: SealedUpdate): Promise<void> {
-    this.queue = this.queue.then(() => this.accept(update));
+    // accept() never throws today; the catch keeps one bad Update from stalling all later ones.
+    this.queue = this.queue.then(() => this.accept(update)).catch(() => undefined);
     return this.queue;
   }
 

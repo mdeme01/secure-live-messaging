@@ -45,6 +45,19 @@ describe('ReceiverPage', () => {
     });
   });
 
+  it('explains a link whose key does not match the Session, without showing any text', async () => {
+    const { key } = await generateSessionKey();
+    const { encoded: wrongKey } = await generateSessionKey();
+    const latest = await sealUpdate(key, id, 0, 'secret');
+    const { harness, el } = await open(`/r/${id}#k=${wrongKey}`, () => ({ ok: true, latest }));
+
+    await vi.waitFor(async () => {
+      await harness.fixture.whenStable();
+      expect(el().querySelector('[role=alert]')?.textContent).toContain("couldn't be verified");
+    });
+    expect(el().textContent).not.toContain('secret');
+  });
+
   it('explains a link without its key', async () => {
     const { el } = await open(`/r/${id}`);
     expect(el().querySelector('[role=alert]')?.textContent).toContain('invalid or incomplete');
