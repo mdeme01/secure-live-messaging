@@ -9,6 +9,7 @@ import {
   type HealthResponse,
 } from '@slm/protocol';
 import { sendError } from './http-errors';
+import { registerLiveHandlers, type LiveServer } from './live.handlers';
 import { SessionStore } from './session-store';
 import { registerSessionRoutes } from './sessions.routes';
 
@@ -26,7 +27,7 @@ const BODY_LIMIT_BYTES = 2 * LIMITS.maxCiphertextBytes;
 
 export interface AppServer {
   http: FastifyInstance;
-  io: SocketServer;
+  io: LiveServer;
   /** Start listening; resolves with the bound address (use port 0 for a random port). */
   listen(port: number, host?: string): Promise<string>;
   close(): Promise<void>;
@@ -51,7 +52,7 @@ export function buildServer(options: ServerOptions = {}): AppServer {
   });
 
   // Single-origin deployment (the web dev server proxies to us), so CORS stays disabled.
-  const io = new SocketServer(http.server, {
+  const io: LiveServer = new SocketServer(http.server, {
     path: SOCKET_PATH,
     serveClient: false,
   });
@@ -61,6 +62,7 @@ export function buildServer(options: ServerOptions = {}): AppServer {
     protocol: PROTOCOL_VERSION,
   }));
   registerSessionRoutes(http, store);
+  registerLiveHandlers(io, store);
 
   return {
     http,

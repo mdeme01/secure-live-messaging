@@ -1,0 +1,88 @@
+import { signal } from '@angular/core';
+import {
+  importSessionKey,
+  openUpdate,
+  type IntegrityFailureReason,
+  type ReceiverLink,
+} from '@slm/crypto';
+import { ErrorCode, type SealedUpdate } from '@slm/protocol';
+import type { LiveTransport } from './transport';
+
+export type ReceiverStatus = 'connecting' | 'live' | 'reconnecting' | 'not-found' | 'error';
+
+export interface ReceiverControllerDeps {
+  link: ReceiverLink;
+  transport: LiveTransport;
+  now?: () => Date;
+}
+
+/**
+ * Receiver side of a Session. Every Update, whether from the join ack or pushed live,
+ * goes through one verify path; only authentic, newer Updates ever become the Message.
+ */
+export class ReceiverController {
+  readonly status = signal<ReceiverStatus>('connecting');
+  /** Last verified Message; null until the first one is verified. */
+  readonly message = signal<string | null>(null);
+  /** When the Receiver accepted the current Message (Receiver's clock). */
+  readonly lastUpdatedAt = signal<Date | null>(null);
+  /** Why the most recent Update was rejected; cleared by the next verified Update. */
+  readonly integrityFailure = signal<IntegrityFailureReason | null>(null);
+
+  private readonly link: ReceiverLink;
+  private readonly transport: LiveTransport;
+  private readonly now: () => Date;
+  private key?: CryptoKey;
+  private lastAcceptedSeq: number | null = null;
+  /** Opening is async; chaining keeps Updates verified in arrival order. */
+  private queue: Promise<void> = Promise.resolve();
+
+  constructor({ link, transport, now = () => new Date() }: ReceiverControllerDeps) {
+    this.link = link;
+    this.transport = transport;
+    this.now = now;
+  }
+
+  async start(): Promise<void> {
+    this.key = await importSessionKey(this.link.sessionKey);
+    this.transport.onConnect(() => void this.join());
+    this.transport.onDisconnect(() => {
+      if (this.status() === 'live') this.status.set('reconnecting');
+    });
+    this.transport.onUpdate((update) => void this.enqueue(update));
+    this.transport.connect();
+  }
+
+  dispose(): void {
+    this.transport.close();
+  }
+
+  private async join(): Promise<void> {
+    const ack = await this.transport.join({ sessionId: this.link.sessionId, role: 'receiver' });
+    if (!ack.ok) {
+      this.status.set(ack.error === ErrorCode.SessionNotFound ? 'not-found' : 'error');
+      this.transport.close();
+      return;
+    }
+    await this.enqueue(ack.latest);
+    this.status.set('live');
+  }
+
+  private enqueue(update: SealedUpdate): Promise<void> {
+    this.queue = this.queue.then(() => this.accept(update));
+    return this.queue;
+  }
+
+  private async accept(update: SealedUpdate): Promise<void> {
+    if (!this.key) return;
+    const result = await openUpdate(this.key, this.link.sessionId, this.lastAcceptedSeq, update);
+    if (result.ok) {
+      this.lastAcceptedSeq = result.seq;
+      this.message.set(result.text);
+      this.lastUpdatedAt.set(this.now());
+      this.integrityFailure.set(null);
+    } else if (result.reason !== 'already-seen') {
+      this.integrityFailure.set(result.reason);
+    }
+  }
+}

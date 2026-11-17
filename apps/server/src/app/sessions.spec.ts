@@ -1,9 +1,9 @@
 import { ErrorCode, LIMITS, SESSIONS_PATH, isSenderToken } from '@slm/protocol';
 import { buildServer, type AppServer, type ServerOptions } from './server';
 
-const update0 = { seq: 0, iv: 'A'.repeat(16), ciphertext: 'B'.repeat(363) };
-let idCounter = 0;
-const newSessionId = () => `test${String(idCounter++).padStart(18, '0')}`;
+import { fakeUpdate, newSessionId } from './testing';
+
+const update0 = fakeUpdate(0);
 
 describe('POST /api/sessions', () => {
   let server: AppServer;
@@ -83,7 +83,7 @@ describe('POST /api/sessions', () => {
     const sessionId = newSessionId();
     expect((await post({ sessionId, update: update0 })).status).toBe(201);
 
-    const res = await post({ sessionId, update: { ...update0, ciphertext: 'C'.repeat(363) } });
+    const res = await post({ sessionId, update: fakeUpdate(0, 'C') });
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ error: ErrorCode.SessionExists });
   });

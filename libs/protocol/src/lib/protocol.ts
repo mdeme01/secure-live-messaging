@@ -109,3 +109,38 @@ export function validateSealedUpdate(
   if (bytes < LIMITS.minCiphertextBytes) return ErrorCode.InvalidPayload;
   return null;
 }
+
+// ---------------------------------------------------------------------------
+// Live channel (socket.io, default namespace)
+// ---------------------------------------------------------------------------
+
+export const SocketEvent = {
+  /** client → server, with ack: join a Session in a role. */
+  Join: 'session:join',
+  /** server → client: a new latest Update. */
+  Update: 'update',
+} as const;
+
+export type Role = 'sender' | 'receiver';
+
+export interface JoinRequest {
+  sessionId: string;
+  role: Role;
+}
+
+export type JoinAck = { ok: true; latest: SealedUpdate } | { ok: false; error: ErrorCode };
+
+/** Typed event maps for socket.io on both sides. */
+export interface ClientToServerEvents {
+  [SocketEvent.Join]: (request: JoinRequest, ack: (response: JoinAck) => void) => void;
+}
+
+export interface ServerToClientEvents {
+  [SocketEvent.Update]: (update: SealedUpdate) => void;
+}
+
+export function isJoinRequest(v: unknown): v is JoinRequest {
+  if (typeof v !== 'object' || v === null) return false;
+  const { sessionId, role } = v as Record<string, unknown>;
+  return isSessionId(sessionId) && (role === 'sender' || role === 'receiver');
+}
