@@ -131,49 +131,52 @@ const STATUS_LABEL: Partial<Record<SenderStatus, string>> = {
             Keep this private: anyone with it can edit or end the session.
           </p>
         </div>
-        <div class="border-t border-slate-200 pt-6">
-          @if (confirmingEnd()) {
-            <div role="alertdialog" aria-labelledby="end-title" class="space-y-3">
-              <p id="end-title" class="text-sm text-slate-700">
-                End this session for good? The message is deleted from the server and the receiver
-                is told the session has ended. This can't be undone.
-              </p>
-              <div class="flex gap-3">
-                <button
-                  type="button"
-                  data-testid="confirm-end"
-                  class="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
-                  [disabled]="controller.ending()"
-                  (click)="controller.end()"
-                >
-                  {{ controller.ending() ? 'Ending…' : 'End session' }}
-                </button>
-                <button
-                  type="button"
-                  data-testid="cancel-end"
-                  class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium"
-                  (click)="confirmingEnd.set(false)"
-                >
-                  Keep it open
-                </button>
+        <!-- Only a tab that has joined as the Sender may end the Session. -->
+        @if (controller.canEnd()) {
+          <div class="border-t border-slate-200 pt-6">
+            @if (confirmingEnd()) {
+              <div role="alertdialog" aria-labelledby="end-title" class="space-y-3">
+                <p id="end-title" class="text-sm text-slate-700">
+                  End this session for good? The message is deleted from the server and the receiver
+                  is told the session has ended. This can't be undone.
+                </p>
+                <div class="flex gap-3">
+                  <button
+                    type="button"
+                    data-testid="confirm-end"
+                    class="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                    [disabled]="controller.ending()"
+                    (click)="controller.end()"
+                  >
+                    {{ controller.ending() ? 'Ending…' : 'End session' }}
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="cancel-end"
+                    class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium"
+                    (click)="confirmingEnd.set(false)"
+                  >
+                    Keep it open
+                  </button>
+                </div>
               </div>
-            </div>
-          } @else {
-            <button
-              type="button"
-              data-testid="end-session"
-              class="rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
-              (click)="confirmingEnd.set(true)"
-            >
-              End session
-            </button>
-          }
-          @if (controller.endFailed()) {
-            <p role="alert" class="mt-2 text-sm text-red-700">
-              Couldn't end the session. Check your connection and try again.
-            </p>
-          }
-        </div>
+            } @else {
+              <button
+                type="button"
+                data-testid="end-session"
+                class="rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
+                (click)="confirmingEnd.set(true)"
+              >
+                End session
+              </button>
+            }
+            @if (controller.endFailed()) {
+              <p role="alert" class="mt-2 text-sm text-red-700">
+                Couldn't end the session. Check your connection and try again.
+              </p>
+            }
+          </div>
+        }
       </section>
     }
   `,

@@ -118,6 +118,25 @@ describe('SenderPage', () => {
     }
   });
 
+  it('offers to end the Session only once this tab has joined', async () => {
+    const { key, joinResponse } = await newSession();
+    let answer!: () => void;
+    const joined = new Promise<void>((resolve) => (answer = resolve));
+    const { el, transport, settle } = await open(`/s/${id}#k=${key}&t=${token}`);
+    transport.join = async (request) => {
+      transport.joins.push(request);
+      await joined;
+      return joinResponse();
+    };
+    transport.simulateConnect();
+
+    await settle(() => expect(status(el())).toContain('Connecting'));
+    expect(el().querySelector('[data-testid=end-session]')).toBeNull();
+
+    answer();
+    await settle(() => expect(el().querySelector('[data-testid=end-session]')).not.toBeNull());
+  });
+
   it('ends the Session only after confirmation', async () => {
     const { key, joinResponse } = await newSession();
     const { el, endSession, settle } = await open(`/s/${id}#k=${key}&t=${token}`, joinResponse);

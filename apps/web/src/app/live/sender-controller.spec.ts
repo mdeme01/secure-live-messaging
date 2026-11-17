@@ -201,6 +201,42 @@ describe('SenderController', () => {
     expect(transport.closed).toBe(true);
   });
 
+  it('cannot end the Session before this tab has joined as the Sender', async () => {
+    // E.g. a second tab with the Sender Link, while its join is refused and retried.
+    const endSession = vi.fn(endedOk);
+    const { encoded } = await generateSessionKey();
+    const transport = new FakeTransport();
+    transport.joinResponse = () => ({ ok: false, error: ErrorCode.RoleTaken });
+    const controller = new SenderController({
+      link: { sessionId: SESSION_ID, sessionKey: encoded, senderToken: TOKEN },
+      transport,
+      endSession,
+    });
+    await controller.start();
+    await vi.waitFor(() => expect(transport.joins).toHaveLength(1));
+
+    expect(controller.canEnd()).toBe(false);
+    await controller.end();
+    expect(endSession).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(FIRST_JOIN_RETRY_DELAYS_MS[0]);
+    await vi.waitFor(() => expect(controller.status()).toBe('role-taken'));
+    expect(controller.canEnd()).toBe(false);
+    expect(endSession).not.toHaveBeenCalled();
+  });
+
+  it('can still end the Session while offline once it has joined', async () => {
+    const endSession = vi.fn(endedOk);
+    const { controller, transport } = await setup({ endSession });
+    transport.simulateDisconnect();
+    expect(controller.status()).toBe('offline');
+
+    expect(controller.canEnd()).toBe(true);
+    await controller.end();
+    expect(endSession).toHaveBeenCalledTimes(1);
+    expect(controller.status()).toBe('ended');
+  });
+
   it('freezes the editor while ending, so nothing typed meanwhile is lost unseen', async () => {
     let finish!: (result: EndSessionResult) => void;
     const { controller } = await setup({
