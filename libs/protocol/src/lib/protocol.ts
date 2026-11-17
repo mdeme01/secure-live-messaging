@@ -20,7 +20,7 @@ export interface HealthResponse {
   protocol: typeof PROTOCOL_VERSION;
 }
 
-/** Create (POST) and end (DELETE `/{id}`) Sessions. */
+/** Session collection: `POST` creates a Session. */
 export const SESSIONS_PATH = `${API_PREFIX}/sessions`;
 
 export const LIMITS = {
@@ -28,6 +28,8 @@ export const LIMITS = {
   maxCiphertextBytes: 64 * 1024,
   /** Plaintext is padded to a multiple of this many bytes to hide its exact length. */
   paddingBlockBytes: 256,
+  /** Smallest possible ciphertext: one padding block plus the 16-byte GCM tag. */
+  minCiphertextBytes: 256 + 16,
 } as const;
 
 export const ErrorCode = {
@@ -72,7 +74,8 @@ export const ENCODED_LENGTH = {
 
 const BASE64URL = /^[A-Za-z0-9_-]*$/;
 
-function isBase64Url(value: unknown, length?: number): value is string {
+/** Unpadded base64url, optionally of an exact encoded length. */
+export function isBase64Url(value: unknown, length?: number): value is string {
   return (
     typeof value === 'string' &&
     BASE64URL.test(value) &&
@@ -100,9 +103,9 @@ export function validateSealedUpdate(
     return ErrorCode.InvalidPayload;
   }
   if (!isBase64Url(iv, ENCODED_LENGTH.iv)) return ErrorCode.InvalidPayload;
-  if (!isBase64Url(ciphertext) || ciphertext.length === 0) return ErrorCode.InvalidPayload;
-  if (Math.floor((ciphertext.length * 3) / 4) > LIMITS.maxCiphertextBytes) {
-    return ErrorCode.PayloadTooLarge;
-  }
+  if (!isBase64Url(ciphertext)) return ErrorCode.InvalidPayload;
+  const bytes = Math.floor((ciphertext.length * 3) / 4);
+  if (bytes > LIMITS.maxCiphertextBytes) return ErrorCode.PayloadTooLarge;
+  if (bytes < LIMITS.minCiphertextBytes) return ErrorCode.InvalidPayload;
   return null;
 }

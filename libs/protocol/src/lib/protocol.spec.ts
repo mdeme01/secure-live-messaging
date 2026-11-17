@@ -48,6 +48,10 @@ describe('protocol', () => {
       ['string seq', { ...validUpdate, seq: '1' }],
       ['short iv', { ...validUpdate, iv: 'A'.repeat(15) }],
       ['empty ciphertext', { ...validUpdate, ciphertext: '' }],
+      [
+        'ciphertext shorter than one block plus tag',
+        { ...validUpdate, ciphertext: 'B'.repeat(362) },
+      ],
       ['non-base64url ciphertext', { ...validUpdate, ciphertext: 'a/b+' }],
     ])('rejects %s as invalid', (_label, value) => {
       expect(validateSealedUpdate(value)).toBe(ErrorCode.InvalidPayload);

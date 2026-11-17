@@ -36,8 +36,16 @@ export interface GeneratedSessionKey {
 
 export type IntegrityFailureReason = 'authentication-failed' | 'stale' | 'malformed';
 
+/**
+ * - ok: an authentic, newer Update.
+ * - already-seen: same Sequence Number as the last accepted one (e.g. re-sent after a reconnect);
+ *   not an Integrity Failure, the caller just ignores it.
+ * - anything else: an Integrity Failure; never show it as text.
+ */
 export type OpenResult =
-  { ok: true; seq: number; text: string } | { ok: false; reason: IntegrityFailureReason };
+  | { ok: true; seq: number; text: string }
+  | { ok: false; reason: 'already-seen' }
+  | { ok: false; reason: IntegrityFailureReason };
 
 function randomBytes(length: number): Uint8Array<ArrayBuffer> {
   return crypto.getRandomValues(new Uint8Array(length));
@@ -77,19 +85,21 @@ function frame(text: string): Uint8Array<ArrayBuffer> {
   const block = LIMITS.paddingBlockBytes;
   const size = Math.ceil((LENGTH_PREFIX_BYTES + utf8.length) / block) * block;
   const framed = new Uint8Array(size);
-  new DataView(framed.buffer).setUint32(0, utf8.length);
+  new DataView(framed.buffer, framed.byteOffset, framed.byteLength).setUint32(0, utf8.length);
   framed.set(utf8, LENGTH_PREFIX_BYTES);
   return framed;
 }
 
-/** Returns null if the authenticated plaintext doesn't follow the framing. */
+/** Returns null if the authenticated plaintext doesn't follow the framing exactly. */
 function unframe(framed: Uint8Array<ArrayBuffer>): string | null {
-  if (framed.length < LENGTH_PREFIX_BYTES) return null;
-  const length = new DataView(framed.buffer).getUint32(0);
-  if (length > framed.length - LENGTH_PREFIX_BYTES) return null;
+  if (framed.length === 0 || framed.length % LIMITS.paddingBlockBytes !== 0) return null;
+  const length = new DataView(framed.buffer, framed.byteOffset, framed.byteLength).getUint32(0);
+  const end = LENGTH_PREFIX_BYTES + length;
+  if (end > framed.length) return null;
+  if (framed.subarray(end).some((byte) => byte !== 0)) return null;
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(
-      framed.subarray(LENGTH_PREFIX_BYTES, LENGTH_PREFIX_BYTES + length),
+      framed.subarray(LENGTH_PREFIX_BYTES, end),
     );
   } catch {
     return null;
@@ -123,7 +133,10 @@ export async function openUpdate(
   update: SealedUpdate,
 ): Promise<OpenResult> {
   if (validateSealedUpdate(update) !== null) return { ok: false, reason: 'malformed' };
-  if (lastAcceptedSeq !== null && update.seq <= lastAcceptedSeq) {
+  if (lastAcceptedSeq !== null && update.seq === lastAcceptedSeq) {
+    return { ok: false, reason: 'already-seen' };
+  }
+  if (lastAcceptedSeq !== null && update.seq < lastAcceptedSeq) {
     return { ok: false, reason: 'stale' };
   }
 

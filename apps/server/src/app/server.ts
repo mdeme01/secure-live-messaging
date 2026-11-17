@@ -6,9 +6,9 @@ import {
   LIMITS,
   PROTOCOL_VERSION,
   SOCKET_PATH,
-  type ErrorResponse,
   type HealthResponse,
 } from '@slm/protocol';
+import { sendError } from './http-errors';
 import { SessionStore } from './session-store';
 import { registerSessionRoutes } from './sessions.routes';
 
@@ -47,10 +47,7 @@ export function buildServer(options: ServerOptions = {}): AppServer {
       reply.log.error(error);
       return reply.code(500).send();
     }
-    const body: ErrorResponse = {
-      error: status === 413 ? ErrorCode.PayloadTooLarge : ErrorCode.InvalidPayload,
-    };
-    return reply.code(status === 413 ? 413 : 400).send(body);
+    return sendError(reply, status === 413 ? ErrorCode.PayloadTooLarge : ErrorCode.InvalidPayload);
   });
 
   // Single-origin deployment (the web dev server proxies to us), so CORS stays disabled.

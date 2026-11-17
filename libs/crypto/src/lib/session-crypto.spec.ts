@@ -128,13 +128,33 @@ describe('session crypto', () => {
       });
     });
 
-    it.each([
-      ['older', 6],
-      ['equal', 5],
-    ])('rejects an %s Sequence Number than the last accepted one as stale', async (_l, last) => {
-      expect(await openUpdate(key, SESSION_ID, last, sealed)).toEqual({
+    it('rejects a Sequence Number older than the last accepted one as stale', async () => {
+      expect(await openUpdate(key, SESSION_ID, 6, sealed)).toEqual({ ok: false, reason: 'stale' });
+    });
+
+    it('reports the last accepted Sequence Number as already seen, not as a failure', async () => {
+      expect(await openUpdate(key, SESSION_ID, 5, sealed)).toEqual({
         ok: false,
-        reason: 'stale',
+        reason: 'already-seen',
+      });
+    });
+
+    it('rejects an authentic ciphertext whose plaintext breaks the framing', async () => {
+      // Sealed with the right key and AAD, but without the length prefix and padding.
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const raw = await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv, additionalData: new TextEncoder().encode(`slm/v1|${SESSION_ID}|7`) },
+        key,
+        new TextEncoder().encode('x'.repeat(300)),
+      );
+      const unframed = {
+        seq: 7,
+        iv: base64UrlEncode(iv),
+        ciphertext: base64UrlEncode(new Uint8Array(raw)),
+      };
+      expect(await openUpdate(key, SESSION_ID, 5, unframed)).toEqual({
+        ok: false,
+        reason: 'malformed',
       });
     });
 

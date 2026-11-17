@@ -1,3 +1,5 @@
+import { isBase64Url } from '@slm/protocol';
+
 /** Unpadded base64url, the encoding used for every binary value in links and on the wire. */
 
 export function base64UrlEncode(bytes: Uint8Array): string {
@@ -8,7 +10,7 @@ export function base64UrlEncode(bytes: Uint8Array): string {
 
 /** Throws on anything that isn't unpadded base64url. */
 export function base64UrlDecode(encoded: string): Uint8Array<ArrayBuffer> {
-  if (!/^[A-Za-z0-9_-]*$/.test(encoded) || encoded.length % 4 === 1) {
+  if (!isBase64Url(encoded)) {
     throw new TypeError('Invalid base64url');
   }
   const binary = atob(encoded.replace(/-/g, '+').replace(/_/g, '/'));
