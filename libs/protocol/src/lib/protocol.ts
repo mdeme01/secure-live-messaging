@@ -125,6 +125,12 @@ export const SocketEvent = {
   Presence: 'presence',
 } as const;
 
+/**
+ * Server heartbeat. A connection that vanished without closing is noticed (and its role
+ * slot freed) within pingIntervalMs + pingTimeoutMs; clients size their retries on it.
+ */
+export const HEARTBEAT = { pingIntervalMs: 10_000, pingTimeoutMs: 5_000 } as const;
+
 export type Role = 'sender' | 'receiver';
 
 export interface JoinRequest {

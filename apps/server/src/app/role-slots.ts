@@ -7,14 +7,9 @@ import type { Role } from '@slm/protocol';
 export class RoleSlots {
   private readonly bySession = new Map<string, Partial<Record<Role, string>>>();
 
-  /** Takes the slot if it is free or already held by this socket. */
-  claim(sessionId: string, role: Role, socketId: string): boolean {
-    const slots = this.bySession.get(sessionId) ?? {};
-    const holder = slots[role];
-    if (holder !== undefined && holder !== socketId) return false;
-    slots[role] = socketId;
-    this.bySession.set(sessionId, slots);
-    return true;
+  /** Gives the slot to this socket; check `holder` first. */
+  claim(sessionId: string, role: Role, socketId: string): void {
+    this.bySession.set(sessionId, { ...this.bySession.get(sessionId), [role]: socketId });
   }
 
   /** Frees the slot if this socket holds it; returns whether it did. */

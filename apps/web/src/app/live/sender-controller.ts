@@ -71,6 +71,7 @@ export class SenderController {
   private serverText: string | null = null;
   private nextSeq = 0;
   private joined = false;
+  private hasJoined = false;
   private inFlight = false;
   /** Set after a resync with the server; a second stale/lost ack in a row is reported, not retried. */
   private resynced = false;
@@ -138,7 +139,7 @@ export class SenderController {
       ack = await joinSession(
         this.transport,
         { sessionId: this.link.sessionId, role: 'sender' },
-        this.editable() ? REJOIN_RETRY_DELAYS_MS : FIRST_JOIN_RETRY_DELAYS_MS,
+        this.hasJoined ? REJOIN_RETRY_DELAYS_MS : FIRST_JOIN_RETRY_DELAYS_MS,
         () => connection === this.connection && !this.stopped(),
       );
     } catch {
@@ -151,6 +152,7 @@ export class SenderController {
     }
     if (!ack) return;
     if (!ack.ok) return this.stop(JOIN_ERROR_STATUS[ack.error] ?? 'error');
+    this.hasJoined = true;
     if (ack.presence) this.receiverConnected.set(ack.presence.receiverConnected);
 
     const result = await openUpdate(this.key, this.link.sessionId, null, ack.latest);
