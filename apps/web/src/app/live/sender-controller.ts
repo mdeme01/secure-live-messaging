@@ -1,4 +1,4 @@
-import { signal } from '@angular/core';
+import { computed, signal } from '@angular/core';
 import {
   importSessionKey,
   isMessageTooLong,
@@ -80,6 +80,11 @@ export class SenderController {
   readonly ending = signal(false);
   /** True if the last end request failed; the Session is still live. */
   readonly endFailed = signal(false);
+  /**
+   * Whether this tab may end the Session: only once it has joined as the Sender. A tab whose
+   * join is still pending (e.g. a second tab about to be refused) must not delete the Session.
+   */
+  readonly canEnd = computed(() => this.hasJoined() && !TERMINAL.has(this.status()));
 
   private readonly link: SenderLink;
   private readonly transport: LiveTransport;
@@ -90,7 +95,8 @@ export class SenderController {
   private serverText: string | null = null;
   private nextSeq = 0;
   private joined = false;
-  private hasJoined = false;
+  /** Set on the first successful join; never reset. */
+  private readonly hasJoined = signal(false);
   private inFlight = false;
   /** Set after a resync with the server; a second stale/lost ack in a row is reported, not retried. */
   private resynced = false;
@@ -150,7 +156,7 @@ export class SenderController {
 
   /** Deletes the Session for good. On failure the Session stays live and `endFailed` is set. */
   async end(): Promise<void> {
-    if (this.stopped() || this.ending()) return;
+    if (this.stopped() || this.ending() || !this.canEnd()) return;
     // Freeze the editor: anything typed now would be deleted with the Session unseen.
     const wasEditable = this.editable();
     this.editable.set(false);
@@ -187,7 +193,7 @@ export class SenderController {
       ack = await joinSession(
         this.transport,
         { sessionId: this.link.sessionId, role: 'sender' },
-        this.hasJoined ? REJOIN_RETRY_DELAYS_MS : FIRST_JOIN_RETRY_DELAYS_MS,
+        this.hasJoined() ? REJOIN_RETRY_DELAYS_MS : FIRST_JOIN_RETRY_DELAYS_MS,
         () => connection === this.connection && !this.stopped(),
       );
     } catch {
@@ -203,7 +209,7 @@ export class SenderController {
     }
     if (!ack) return;
     if (!ack.ok) return this.stop(JOIN_ERROR_STATUS[ack.error] ?? 'error');
-    this.hasJoined = true;
+    this.hasJoined.set(true);
     if (ack.presence) this.receiverConnected.set(ack.presence.receiverConnected);
 
     const result = await openUpdate(this.key, this.link.sessionId, null, ack.latest);
