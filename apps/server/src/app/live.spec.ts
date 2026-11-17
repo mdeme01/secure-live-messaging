@@ -2,6 +2,12 @@ import { ErrorCode, SocketEvent } from '@slm/protocol';
 import { buildServer, type AppServer } from './server';
 import { connectClient, createSession, fakeUpdate, newSessionId, type TestClient } from './testing';
 
+/** Bypass the typed contract to send whatever a hostile client might. */
+const emitRaw = (c: TestClient, event: string, ...args: unknown[]) =>
+  (c.emitWithAck as (...a: unknown[]) => Promise<unknown>)(event, ...args);
+const emitUnacked = (c: TestClient, event: string, ...args: unknown[]) =>
+  (c.emit as (...a: unknown[]) => void)(event, ...args);
+
 describe('live channel', () => {
   let server: AppServer;
   let baseUrl: string;
@@ -49,11 +55,7 @@ describe('live channel', () => {
     ['missing body', null],
   ])('answers INVALID_PAYLOAD for a %s', async (_label, request) => {
     const c = await client();
-    // Deliberately bypass the typed contract to send garbage.
-    const ack = await (c.emitWithAck as (...args: unknown[]) => Promise<unknown>)(
-      SocketEvent.Join,
-      request,
-    );
+    const ack = await emitRaw(c, SocketEvent.Join, request);
     expect(ack).toEqual({ ok: false, error: ErrorCode.InvalidPayload });
   });
 
@@ -170,6 +172,43 @@ describe('live channel', () => {
           ciphertext: 'A'.repeat(90_000),
         }),
       ).toEqual({ ok: false, error: ErrorCode.PayloadTooLarge });
+    });
+  });
+
+  describe('malformed input', () => {
+    it.each([
+      ['null', null],
+      ['a string', 'update'],
+      ['an empty object', {}],
+      ['a negative seq', { ...fakeUpdate(1), seq: -1 }],
+      ['a fractional seq', { ...fakeUpdate(1), seq: 1.5 }],
+      ['a string seq', { ...fakeUpdate(1), seq: '1' }],
+      ['a short IV', { ...fakeUpdate(1), iv: 'A'.repeat(15) }],
+      ['non-base64url ciphertext', { ...fakeUpdate(1), ciphertext: '+/'.repeat(200) }],
+      ['ciphertext below one padding block', { ...fakeUpdate(1), ciphertext: 'B'.repeat(100) }],
+    ])('rejects a published Update that is %s with INVALID_PAYLOAD', async (_label, update) => {
+      const session = await createSession(baseUrl);
+      const sender = await client({ senderToken: session.senderToken });
+      await sender.emitWithAck(SocketEvent.Join, { sessionId: session.sessionId, role: 'sender' });
+
+      expect(await emitRaw(sender, SocketEvent.Publish, update)).toEqual({
+        ok: false,
+        error: ErrorCode.InvalidPayload,
+      });
+    });
+
+    it('ignores events sent without an acknowledgement callback and keeps serving', async () => {
+      const { sessionId, senderToken } = await createSession(baseUrl);
+      const sender = await client({ senderToken });
+      await sender.emitWithAck(SocketEvent.Join, { sessionId, role: 'sender' });
+      emitUnacked(sender, SocketEvent.Publish, fakeUpdate(1));
+      emitUnacked(sender, SocketEvent.Join, { sessionId, role: 'sender' });
+
+      // The unacknowledged Update was not stored, and the socket still works.
+      const receiver = await client();
+      const ack = await receiver.emitWithAck(SocketEvent.Join, { sessionId, role: 'receiver' });
+      expect(ack).toMatchObject({ ok: true, latest: { seq: 0 } });
+      expect(await sender.emitWithAck(SocketEvent.Publish, fakeUpdate(1))).toEqual({ ok: true });
     });
   });
 

@@ -31,8 +31,15 @@ const DEFAULT_MAX_SESSIONS = 1000;
 /** How often idle Sessions are swept; one may outlive the timeout by up to this much. */
 const EXPIRY_SWEEP_INTERVAL_MS = 60_000;
 
-/** Room for the largest base64url ciphertext plus JSON overhead. */
+/** Room for the largest base64url ciphertext plus JSON overhead (REST bodies and socket frames). */
 const BODY_LIMIT_BYTES = 2 * LIMITS.maxCiphertextBytes;
+
+/** On every HTTP response: nothing is cached, sniffed, or leaked through the Referer. */
+const DEFENSIVE_HEADERS = {
+  'referrer-policy': 'no-referrer',
+  'x-content-type-options': 'nosniff',
+  'cache-control': 'no-store',
+} as const;
 
 export interface AppServer {
   http: FastifyInstance;
@@ -56,6 +63,11 @@ export function buildServer(options: ServerOptions = {}): AppServer {
     now: options.now,
   });
 
+  // Set first thing, so error and not-found responses carry them too.
+  http.addHook('onRequest', async (_request, reply) => {
+    reply.headers(DEFENSIVE_HEADERS);
+  });
+
   // Uniform error bodies for anything Fastify rejects before our handlers run.
   http.setErrorHandler<{ statusCode?: number }>((error, _request, reply) => {
     const status = error.statusCode ?? 500;
@@ -72,6 +84,8 @@ export function buildServer(options: ServerOptions = {}): AppServer {
     serveClient: false,
     pingInterval: HEARTBEAT.pingIntervalMs,
     pingTimeout: HEARTBEAT.pingTimeoutMs,
+    // A frame larger than any valid Update closes the connection before it is parsed.
+    maxHttpBufferSize: BODY_LIMIT_BYTES,
   });
 
   http.get(HEALTH_PATH, async (): Promise<HealthResponse> => ({
