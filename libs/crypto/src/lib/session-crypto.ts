@@ -71,7 +71,12 @@ export async function generateSessionKey(): Promise<GeneratedSessionKey> {
 /** Imports a Session Key taken from a link fragment. Throws if it is malformed. */
 export async function importSessionKey(encoded: string): Promise<CryptoKey> {
   if (!isSessionKey(encoded)) throw new TypeError('Malformed Session Key');
-  return importRawKey(base64UrlDecode(encoded));
+  const raw = base64UrlDecode(encoded);
+  try {
+    return await importRawKey(raw);
+  } finally {
+    raw.fill(0);
+  }
 }
 
 export function generateSessionId(): string {

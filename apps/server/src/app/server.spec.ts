@@ -82,4 +82,9 @@ describe('server', () => {
     expect(socket.connected).toBe(true);
     socket.disconnect();
   });
+
+  it('refuses HTTP long-polling: the live channel is WebSocket only', async () => {
+    const res = await fetch(`${baseUrl}${SOCKET_PATH}/?EIO=4&transport=polling`);
+    expect(res.status).toBe(400);
+  });
 });

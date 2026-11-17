@@ -1,3 +1,4 @@
+import { request } from 'node:http';
 import { ErrorCode, LIMITS, SESSIONS_PATH, isSenderToken } from '@slm/protocol';
 import { buildServer, type AppServer, type ServerOptions } from './server';
 
@@ -71,11 +72,28 @@ describe('POST /api/sessions', () => {
     expect(await res.json()).toEqual({ error: ErrorCode.PayloadTooLarge });
   });
 
-  it('rejects a body far over the limit with 413 before parsing it', async () => {
+  it('rejects a body far over the limit with 413 before reading it', async () => {
     await start();
-    const res = await post(undefined, JSON.stringify({ junk: 'x'.repeat(1024 * 1024) }));
-    expect(res.status).toBe(413);
-    expect(await res.json()).toEqual({ error: ErrorCode.PayloadTooLarge });
+    // Only the headers are sent: the server must answer from the declared length alone.
+    // (Streaming the body too races the server closing the connection: ECONNRESET.)
+    const { status, body } = await new Promise<{ status?: number; body: string }>(
+      (resolve, reject) => {
+        const req = request(`${baseUrl}${SESSIONS_PATH}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'content-length': 1024 * 1024 },
+        });
+        req.on('error', reject);
+        req.on('response', (res) => {
+          let data = '';
+          res.setEncoding('utf8');
+          res.on('data', (chunk) => (data += chunk));
+          res.on('end', () => resolve({ status: res.statusCode, body: data }));
+        });
+        req.flushHeaders();
+      },
+    );
+    expect(status).toBe(413);
+    expect(JSON.parse(body)).toEqual({ error: ErrorCode.PayloadTooLarge });
   });
 
   it('rejects a Session ID that already exists with 409', async () => {
