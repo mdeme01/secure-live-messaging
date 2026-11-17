@@ -1,0 +1,9 @@
+{
+  "name": "@slm/server",
+  "version": "0.0.1",
+  "private": true,
+  "dependencies": {
+    "fastify": "~5.12.8",
+    "socket.io": "~4.8.4"
+  }
+}
