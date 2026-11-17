@@ -82,6 +82,9 @@ export function buildServer(options: ServerOptions = {}): AppServer {
   const io: LiveServer = new SocketServer(http.server, {
     path: SOCKET_PATH,
     serveClient: false,
+    // The web client only uses WebSocket; refusing long-polling keeps every HTTP response
+    // under the defensive headers above and shrinks the surface.
+    transports: ['websocket'],
     pingInterval: HEARTBEAT.pingIntervalMs,
     pingTimeout: HEARTBEAT.pingTimeoutMs,
     // A frame larger than any valid Update closes the connection before it is parsed.
