@@ -173,6 +173,44 @@ describe('live channel', () => {
     });
   });
 
+  describe('malformed input', () => {
+    /** Bypasses the typed contract to send whatever a hostile client might. */
+    const emitRaw = (c: TestClient, event: string, ...args: unknown[]) =>
+      (c.emitWithAck as (...a: unknown[]) => Promise<unknown>)(event, ...args);
+
+    it.each([
+      ['null', null],
+      ['a string', 'update'],
+      ['an empty object', {}],
+      ['a negative seq', { ...fakeUpdate(1), seq: -1 }],
+      ['a fractional seq', { ...fakeUpdate(1), seq: 1.5 }],
+      ['a string seq', { ...fakeUpdate(1), seq: '1' }],
+      ['a short IV', { ...fakeUpdate(1), iv: 'A'.repeat(15) }],
+      ['non-base64url ciphertext', { ...fakeUpdate(1), ciphertext: '+/'.repeat(200) }],
+      ['ciphertext below one padding block', { ...fakeUpdate(1), ciphertext: 'B'.repeat(100) }],
+    ])('rejects a published Update that is %s with INVALID_PAYLOAD', async (_label, update) => {
+      const session = await createSession(baseUrl);
+      const sender = await client({ senderToken: session.senderToken });
+      await sender.emitWithAck(SocketEvent.Join, { sessionId: session.sessionId, role: 'sender' });
+
+      expect(await emitRaw(sender, SocketEvent.Publish, update)).toEqual({
+        ok: false,
+        error: ErrorCode.InvalidPayload,
+      });
+    });
+
+    it('ignores events sent without an acknowledgement callback and keeps serving', async () => {
+      const { sessionId } = await createSession(baseUrl);
+      const c = await client();
+      (c.emit as (...a: unknown[]) => void)(SocketEvent.Join, { sessionId, role: 'receiver' });
+      (c.emit as (...a: unknown[]) => void)(SocketEvent.Publish, fakeUpdate(1));
+
+      expect(await c.emitWithAck(SocketEvent.Join, { sessionId, role: 'receiver' })).toMatchObject({
+        ok: true,
+      });
+    });
+  });
+
   describe('one sender, one receiver', () => {
     const join = (c: TestClient, sessionId: string, role: 'sender' | 'receiver') =>
       c.emitWithAck(SocketEvent.Join, { sessionId, role });

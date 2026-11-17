@@ -1,5 +1,12 @@
 import { io as connect, type Socket } from 'socket.io-client';
-import { HEALTH_PATH, PROTOCOL_VERSION, SOCKET_PATH } from '@slm/protocol';
+import {
+  HEALTH_PATH,
+  PROTOCOL_VERSION,
+  SESSIONS_PATH,
+  SOCKET_PATH,
+  sessionPath,
+} from '@slm/protocol';
+import { connectClient, newSessionId } from './testing';
 import { buildServer, type AppServer } from './server';
 
 describe('server', () => {
@@ -23,6 +30,39 @@ describe('server', () => {
       status: 'ok',
       protocol: PROTOCOL_VERSION,
     });
+  });
+
+  it.each([
+    ['a success', () => fetch(`${baseUrl}${HEALTH_PATH}`), 200],
+    [
+      'a rejected body',
+      () =>
+        fetch(`${baseUrl}${SESSIONS_PATH}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: '{',
+        }),
+      400,
+    ],
+    [
+      'an unknown Session',
+      () => fetch(`${baseUrl}${sessionPath(newSessionId())}`, { method: 'DELETE' }),
+      404,
+    ],
+    ['an unknown route', () => fetch(`${baseUrl}/api/nope`), 404],
+  ])('sets defensive headers on %s', async (_label, request, status) => {
+    const res = await request();
+    expect(res.status).toBe(status);
+    expect(res.headers.get('referrer-policy')).toBe('no-referrer');
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(res.headers.get('cache-control')).toBe('no-store');
+  });
+
+  it('drops a socket that sends a frame far larger than any valid Update', async () => {
+    const socket = await connectClient(baseUrl);
+    const dropped = new Promise((resolve) => socket.once('disconnect', resolve));
+    socket.emit('update:publish' as never, { ciphertext: 'A'.repeat(300_000) } as never);
+    expect(await dropped).toBe('transport close');
   });
 
   it('accepts socket.io connections on the shared socket path', async () => {
