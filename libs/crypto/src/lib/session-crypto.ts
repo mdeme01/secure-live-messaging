@@ -20,6 +20,11 @@ export const MAX_MESSAGE_BYTES =
     LIMITS.paddingBlockBytes -
   LENGTH_PREFIX_BYTES;
 
+/** Size of a Message as it is sealed: UTF-8 bytes, not characters. */
+export const messageByteLength = (text: string) => new TextEncoder().encode(text).length;
+
+export const isMessageTooLong = (text: string) => messageByteLength(text) > MAX_MESSAGE_BYTES;
+
 export class MessageTooLongError extends Error {
   constructor(readonly bytes: number) {
     super(`Message is ${bytes} bytes; the limit is ${MAX_MESSAGE_BYTES}`);

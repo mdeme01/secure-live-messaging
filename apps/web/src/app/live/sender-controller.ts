@@ -1,8 +1,7 @@
 import { signal } from '@angular/core';
 import {
   importSessionKey,
-  MAX_MESSAGE_BYTES,
-  MessageTooLongError,
+  isMessageTooLong,
   openUpdate,
   sealUpdate,
   type SenderLink,
@@ -34,8 +33,10 @@ export interface SenderControllerDeps {
   now?: () => Date;
 }
 
-const encoder = new TextEncoder();
-const isTooLong = (text: string) => encoder.encode(text).length > MAX_MESSAGE_BYTES;
+const JOIN_ERROR_STATUS: Partial<Record<ErrorCode, SenderStatus>> = {
+  [ErrorCode.SessionNotFound]: 'not-found',
+  [ErrorCode.Unauthorized]: 'unauthorized',
+};
 
 /**
  * Sender side of a Session. Edits are debounced, encrypted in the browser and published
@@ -61,6 +62,8 @@ export class SenderController {
   private nextSeq = 0;
   private joined = false;
   private inFlight = false;
+  /** Set after a resync with the server; a second stale/lost ack in a row is reported, not retried. */
+  private resynced = false;
   private timer?: ReturnType<typeof setTimeout>;
   private disposed = false;
   /** Bumped on every (dis)connect so a slow join or publish can tell it has been overtaken. */
@@ -92,10 +95,11 @@ export class SenderController {
 
   setText(text: string): void {
     this.text.set(text);
+    this.resynced = false;
     if (!this.editable() || this.stopped()) return;
     clearTimeout(this.timer);
     this.timer = undefined;
-    if (isTooLong(text)) {
+    if (isMessageTooLong(text)) {
       this.status.set('too-long');
       return;
     }
@@ -119,18 +123,15 @@ export class SenderController {
     try {
       ack = await this.transport.join({ sessionId: this.link.sessionId, role: 'sender' });
     } catch {
-      return; // The next reconnect joins again.
+      if (connection === this.connection && this.resynced) {
+        // A resync that got no answer: let the next edit try again.
+        this.joined = true;
+        this.status.set('error');
+      }
+      return; // Otherwise the next reconnect joins again.
     }
     if (connection !== this.connection) return;
-    if (!ack.ok) {
-      const status =
-        ack.error === ErrorCode.SessionNotFound
-          ? 'not-found'
-          : ack.error === ErrorCode.Unauthorized
-            ? 'unauthorized'
-            : 'error';
-      return this.stop(status);
-    }
+    if (!ack.ok) return this.stop(JOIN_ERROR_STATUS[ack.error] ?? 'error');
 
     const result = await openUpdate(this.key, this.link.sessionId, null, ack.latest);
     if (connection !== this.connection) return;
@@ -145,7 +146,7 @@ export class SenderController {
       this.editable.set(true);
     }
     this.joined = true;
-    if (isTooLong(this.text())) this.status.set('too-long');
+    if (isMessageTooLong(this.text())) this.status.set('too-long');
     else if (this.text() !== this.serverText) void this.flush();
     else this.status.set(this.idleStatus());
   }
@@ -153,7 +154,7 @@ export class SenderController {
   private async flush(): Promise<void> {
     if (!this.key || !this.joined || this.inFlight || this.stopped()) return;
     const text = this.text();
-    if (isTooLong(text)) return;
+    if (isMessageTooLong(text)) return;
     if (text === this.serverText) {
       this.status.set(this.idleStatus());
       return;
@@ -163,29 +164,45 @@ export class SenderController {
     const seq = this.nextSeq;
     this.inFlight = true;
     this.status.set('sending');
-    let sent = false;
+    let outcome: 'sent' | 'failed' | 'out-of-sync';
     try {
-      const ack = await this.transport.publish(
-        await sealUpdate(this.key, this.link.sessionId, seq, text),
-      );
-      if (connection !== this.connection) return;
-      if (ack.ok) {
-        this.serverText = text;
-        this.nextSeq = seq + 1;
-        this.lastSentAt.set(this.now());
-        this.status.set('sent');
-        sent = true;
-      } else {
-        this.status.set('error');
+      const update = await sealUpdate(this.key, this.link.sessionId, seq, text);
+      try {
+        const ack = await this.transport.publish(update);
+        outcome = ack.ok
+          ? 'sent'
+          : ack.error === ErrorCode.StaleSequence
+            ? 'out-of-sync'
+            : 'failed';
+      } catch {
+        outcome = 'out-of-sync'; // No ack in time: the server may or may not have stored it.
       }
-    } catch (error) {
-      if (connection !== this.connection) return;
-      this.status.set(error instanceof MessageTooLongError ? 'too-long' : 'error');
-    } finally {
-      if (connection === this.connection) this.inFlight = false;
+    } catch {
+      outcome = 'failed';
     }
-    // Edits made while this was in flight go now, unless the user is still typing.
-    if (sent && this.timer === undefined && this.text() !== this.serverText) void this.flush();
+    if (connection !== this.connection || this.stopped()) return; // Abandoned by a disconnect.
+    this.inFlight = false;
+
+    if (outcome === 'out-of-sync') {
+      if (!this.resynced) {
+        // The server's latest Update is the source of truth: rejoin to learn it, then carry on.
+        this.resynced = true;
+        this.joined = false;
+        return this.join(connection);
+      }
+      outcome = 'failed';
+    }
+    if (outcome === 'sent') {
+      this.serverText = text;
+      this.nextSeq = seq + 1;
+      this.resynced = false;
+      this.lastSentAt.set(this.now());
+    }
+    if (isMessageTooLong(this.text())) this.status.set('too-long');
+    else this.status.set(outcome === 'sent' ? 'sent' : 'error');
+
+    // Edits made meanwhile go now (latest wins), unless the user is still typing.
+    if (this.timer === undefined && this.text() !== text) void this.flush();
   }
 
   private stop(status: SenderStatus): void {

@@ -8,7 +8,7 @@ import { CopyField } from '../../ui/copy-field';
 
 const STATUS_LABEL: Partial<Record<SenderStatus, string>> = {
   connecting: 'Connecting…',
-  ready: 'Ready. Start typing.',
+  ready: 'Live. The receiver sees what you type.',
   sending: 'Sending…',
   offline: 'Offline. Your edits will be sent when the connection is back.',
   error: "Couldn't send the last change. Keep typing to retry.",

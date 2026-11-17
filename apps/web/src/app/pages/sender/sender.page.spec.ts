@@ -62,7 +62,7 @@ describe('SenderPage', () => {
     await settle(() => expect(editor(el()).disabled).toBe(false));
     expect(auths).toEqual([{ senderToken: token }]);
     expect(editor(el()).value).toBe('hello');
-    expect(status(el())).toContain('Ready');
+    expect(status(el())).toContain('Live');
   });
 
   it('sends what is typed and reports when it was sent', async () => {

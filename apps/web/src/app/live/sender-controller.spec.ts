@@ -103,7 +103,7 @@ describe('SenderController', () => {
 
     controller.setText('a');
     await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
-    await vi.waitFor(() => expect(controller.status()).toBe('sending'));
+    await vi.waitFor(() => expect(transport.published).toHaveLength(1));
     controller.setText('ab');
     await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
     controller.setText('abc');
@@ -242,5 +242,93 @@ describe('SenderController', () => {
     await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
     expect(transport.published).toEqual([]);
     expect(transport.closed).toBe(true);
+  });
+
+  it('resyncs with the server after STALE_SEQUENCE and sends on top of its latest Update', async () => {
+    const { controller, transport, key, setLatest, texts } = await setup();
+    // Someone else's Update reached the server first.
+    setLatest(await sealUpdate(key, SESSION_ID, 5, 'written elsewhere'));
+
+    controller.setText('mine');
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    await vi.waitFor(() => expect(controller.status()).toBe('sent'));
+
+    expect(transport.joins).toHaveLength(2);
+    expect(transport.published.map((u) => u.seq)).toEqual([1, 6]);
+    expect(await texts()).toEqual(['mine', 'mine']);
+  });
+
+  it('resyncs after a lost ack instead of resending the same Sequence Number', async () => {
+    const { controller, transport } = await setup();
+    const respond = transport.publishResponse;
+    transport.publishResponse = async (update) => {
+      await respond(update); // stored by the server…
+      throw new Error('ack timeout'); // …but the ack never arrived
+    };
+
+    controller.setText('stored anyway');
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    await vi.waitFor(() => expect(transport.joins).toHaveLength(2));
+    await vi.waitFor(() => expect(controller.status()).toBe('ready'));
+
+    transport.publishResponse = respond;
+    controller.setText('stored anyway, and more');
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    await vi.waitFor(() => expect(controller.status()).toBe('sent'));
+    expect(transport.published.map((u) => u.seq)).toEqual([1, 2]);
+  });
+
+  it('reports an error instead of looping when the resync does not help', async () => {
+    const { controller, transport } = await setup();
+    transport.publishResponse = () => ({ ok: false, error: ErrorCode.StaleSequence });
+
+    controller.setText('never accepted');
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    await vi.waitFor(() => expect(controller.status()).toBe('error'));
+    expect(transport.joins).toHaveLength(2);
+    expect(transport.published).toHaveLength(2);
+  });
+
+  it('sends edits made during a failed publish without waiting for more typing', async () => {
+    const { controller, transport, texts } = await setup();
+    const respond = transport.publishResponse;
+    let rejectFirst!: () => void;
+    transport.publishResponse = (update) =>
+      update.seq === 1 && transport.published.length === 1
+        ? new Promise<PublishAck>(
+            (resolve) =>
+              (rejectFirst = () => resolve({ ok: false, error: ErrorCode.InvalidPayload })),
+          )
+        : respond(update);
+
+    controller.setText('a');
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    await vi.waitFor(() => expect(transport.published).toHaveLength(1));
+    controller.setText('ab');
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+
+    rejectFirst();
+    await vi.waitFor(() => expect(controller.status()).toBe('sent'));
+    expect(await texts()).toEqual(['a', 'ab']);
+  });
+
+  it('keeps the too-long warning when an earlier publish settles', async () => {
+    const { controller, transport } = await setup();
+    const respond = transport.publishResponse;
+    let release!: () => void;
+    transport.publishResponse = (update) =>
+      new Promise<PublishAck>(
+        (resolve) => (release = () => resolve(respond(update) as PublishAck)),
+      );
+
+    controller.setText('short');
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    await vi.waitFor(() => expect(transport.published).toHaveLength(1));
+    controller.setText('x'.repeat(MAX_MESSAGE_BYTES + 1));
+    release();
+
+    await vi.waitFor(() => expect(controller.lastSentAt()).not.toBeNull());
+    expect(controller.status()).toBe('too-long');
+    expect(transport.published).toHaveLength(1);
   });
 });

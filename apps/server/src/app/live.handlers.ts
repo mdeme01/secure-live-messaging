@@ -45,7 +45,10 @@ export function registerLiveHandlers(io: LiveServer, store: SessionStore): void 
         return ack({ ok: false, error: ErrorCode.Unauthorized });
       }
 
+      const previous = socket.data.sessionId;
+      if (previous && previous !== request.sessionId) void socket.leave(sessionRoom(previous));
       socket.data = { sessionId: request.sessionId, role: request.role };
+      store.touch(request.sessionId);
       void socket.join(sessionRoom(request.sessionId));
       ack({ ok: true, latest: session.latest });
     });
