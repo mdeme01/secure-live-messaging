@@ -1,12 +1,14 @@
 import { io as connect, type Socket } from 'socket.io-client';
 import {
   HEALTH_PATH,
+  LIMITS,
   PROTOCOL_VERSION,
   SESSIONS_PATH,
   SOCKET_PATH,
+  SocketEvent,
   sessionPath,
 } from '@slm/protocol';
-import { connectClient, newSessionId } from './testing';
+import { connectClient, fakeUpdate, newSessionId } from './testing';
 import { buildServer, type AppServer } from './server';
 
 describe('server', () => {
@@ -61,7 +63,8 @@ describe('server', () => {
   it('drops a socket that sends a frame far larger than any valid Update', async () => {
     const socket = await connectClient(baseUrl);
     const dropped = new Promise((resolve) => socket.once('disconnect', resolve));
-    socket.emit('update:publish' as never, { ciphertext: 'A'.repeat(300_000) } as never);
+    const ciphertext = 'A'.repeat(4 * LIMITS.maxCiphertextBytes);
+    socket.emit(SocketEvent.Publish, { ...fakeUpdate(1), ciphertext });
     expect(await dropped).toBe('transport close');
   });
 

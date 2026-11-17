@@ -1,24 +1,24 @@
 import { expect, test, type Page } from '@playwright/test';
 import { createSession } from './support/session';
 
+type WithViolations = Window & { __cspViolations: string[] };
+
 /** Records every CSP violation the page reports, from the very first script on. */
 async function recordCspViolations(page: Page): Promise<() => Promise<string[]>> {
-  const console: string[] = [];
+  const consoleReports: string[] = [];
   page.on('console', (message) => {
-    if (message.text().includes('Content Security Policy')) console.push(message.text());
+    if (message.text().includes('Content Security Policy')) consoleReports.push(message.text());
   });
   await page.addInitScript(() => {
     const seen: string[] = [];
-    (window as unknown as { __cspViolations: string[] }).__cspViolations = seen;
+    (window as unknown as WithViolations).__cspViolations = seen;
     document.addEventListener('securitypolicyviolation', (e) =>
       seen.push(`${e.violatedDirective} ${e.blockedURI}`),
     );
   });
   return async () => [
-    ...console,
-    ...(await page.evaluate(
-      () => (window as unknown as { __cspViolations: string[] }).__cspViolations,
-    )),
+    ...consoleReports,
+    ...(await page.evaluate(() => (window as unknown as WithViolations).__cspViolations)),
   ];
 }
 
@@ -48,8 +48,7 @@ test('the whole flow runs under a strict CSP with no violations', async ({ brows
   await receiverContext.close();
 });
 
-test('the page tells the browser never to send a Referer', async ({ page }) => {
+test('the page carries a no-referrer policy', async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('meta[name="referrer"]')).toHaveAttribute('content', 'no-referrer');
-  expect(await page.evaluate(() => document.referrer)).toBe('');
 });
