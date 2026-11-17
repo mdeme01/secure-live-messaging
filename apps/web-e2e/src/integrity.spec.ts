@@ -3,6 +3,7 @@ import { createSession } from './support/session';
 
 /** socket.io event frame from the server: engine.io "message" (4) + socket.io "event" (2) + JSON. */
 const EVENT_PREFIX = '42';
+const UPDATE_FRAME_PREFIX = `${EVENT_PREFIX}["update"`;
 
 /** Flips one bit of the first ciphertext byte of an `update` event frame. */
 function tamperUpdateFrame(frame: string): string {
@@ -24,7 +25,7 @@ async function interceptReceiverSocket(page: Page) {
     const server = ws.connectToServer();
     ws.onMessage((message) => server.send(message));
     server.onMessage((message) => {
-      if (tamper && typeof message === 'string' && message.startsWith('42["update"')) {
+      if (tamper && typeof message === 'string' && message.startsWith(UPDATE_FRAME_PREFIX)) {
         tamper = false;
         tampered++;
         ws.send(tamperUpdateFrame(message));
@@ -61,7 +62,7 @@ test('a tampered Update is never shown; the last verified Message stays until a 
   await editor.fill('this update gets tampered');
   const banner = receiver.getByTestId('integrity-banner');
   await expect(banner).toHaveText(
-    'Latest update failed integrity check — showing last verified message.',
+    'Latest update failed integrity check — showing last verified message',
   );
   expect(mitm.tamperedCount()).toBe(1);
   await expect(receiver.getByTestId('message')).toHaveText('verified message');

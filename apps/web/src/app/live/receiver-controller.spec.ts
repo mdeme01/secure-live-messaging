@@ -70,6 +70,50 @@ describe('ReceiverController', () => {
     transport.simulateUpdate(update);
     await new Promise((r) => setTimeout(r, 10));
     expect(controller.integrityFailure()).toBeNull();
+    expect(controller.message()).toBe('once');
+  });
+
+  it('silently drops a forged Update that reuses the current Sequence Number', async () => {
+    const { controller, transport, seal } = await setup();
+    transport.simulateUpdate(await seal(1, 'genuine'));
+    await vi.waitFor(() => expect(controller.message()).toBe('genuine'));
+
+    const forged = await seal(1, 'forged');
+    transport.simulateUpdate({ ...forged, ciphertext: flipFirstChar(forged.ciphertext) });
+    transport.simulateUpdate(await seal(2, 'after'));
+
+    // Equal seq counts as already shown: never decrypted, never displayed.
+    await vi.waitFor(() => expect(controller.message()).toBe('after'));
+    expect(controller.integrityFailure()).toBeNull();
+  });
+
+  it('rejects a byte-identical replay of an earlier Update', async () => {
+    const { controller, transport, seal } = await setup();
+    const first = await seal(1, 'first');
+    transport.simulateUpdate(first);
+    transport.simulateUpdate(await seal(2, 'second'));
+    await vi.waitFor(() => expect(controller.message()).toBe('second'));
+
+    transport.simulateUpdate(first);
+
+    await vi.waitFor(() => expect(controller.integrityFailure()).toBe('stale'));
+    expect(controller.message()).toBe('second');
+  });
+
+  it('treats an older Update in the join after a reconnect as an Integrity Failure', async () => {
+    const { controller, transport, seal, setLatest } = await setup();
+    const old = await seal(1, 'old');
+    transport.simulateUpdate(old);
+    transport.simulateUpdate(await seal(2, 'newer'));
+    await vi.waitFor(() => expect(controller.message()).toBe('newer'));
+
+    // A server that rolls the Session back to an older Update.
+    setLatest(old);
+    transport.simulateDisconnect();
+    transport.simulateConnect();
+
+    await vi.waitFor(() => expect(controller.integrityFailure()).toBe('stale'));
+    expect(controller.message()).toBe('newer');
   });
 
   type Seal = (seq: number, text: string, sessionId?: string) => Promise<SealedUpdate>;
