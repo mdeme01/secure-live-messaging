@@ -7,7 +7,12 @@ import {
   type SenderLink,
 } from '@slm/crypto';
 import { ErrorCode } from '@slm/protocol';
-import { FIRST_JOIN_RETRY_DELAYS_MS, joinSession, REJOIN_RETRY_DELAYS_MS } from './join-session';
+import {
+  FIRST_JOIN_RETRY_DELAYS_MS,
+  joinSession,
+  REJOIN_RETRY_DELAYS_MS,
+  UNANSWERED_JOIN_RETRY_MS,
+} from './join-session';
 import type { LiveTransport } from './transport';
 
 /** Typing pause before an edit is encrypted and sent. */
@@ -76,6 +81,7 @@ export class SenderController {
   /** Set after a resync with the server; a second stale/lost ack in a row is reported, not retried. */
   private resynced = false;
   private timer?: ReturnType<typeof setTimeout>;
+  private retryTimer?: ReturnType<typeof setTimeout>;
   private disposed = false;
   /** Bumped on every (dis)connect so a slow join or publish can tell it has been overtaken. */
   private connection = 0;
@@ -103,7 +109,8 @@ export class SenderController {
       this.joined = false;
       this.receiverConnected.set(false); // Unknown until we rejoin.
       this.inFlight = false; // Abandoned; the rejoin tells us whether it landed.
-      if (!this.stopped()) this.status.set(this.editable() ? 'offline' : 'connecting');
+      if (this.stopped() || this.status() === 'too-long') return;
+      this.status.set(this.editable() ? 'offline' : 'connecting');
     });
     this.transport.connect();
   }
@@ -129,6 +136,7 @@ export class SenderController {
     this.disposed = true;
     this.connection++;
     clearTimeout(this.timer);
+    clearTimeout(this.retryTimer);
     this.transport.close();
   }
 
@@ -143,12 +151,15 @@ export class SenderController {
         () => connection === this.connection && !this.stopped(),
       );
     } catch {
-      if (connection === this.connection && this.resynced) {
+      if (connection !== this.connection || this.stopped()) return; // The next connect rejoins.
+      if (this.resynced) {
         // A resync that got no answer: let the next edit try again.
         this.joined = true;
         this.status.set('error');
+        return;
       }
-      return; // Otherwise the next reconnect joins again.
+      this.retryTimer = setTimeout(() => void this.join(connection), UNANSWERED_JOIN_RETRY_MS);
+      return;
     }
     if (!ack) return;
     if (!ack.ok) return this.stop(JOIN_ERROR_STATUS[ack.error] ?? 'error');

@@ -6,7 +6,12 @@ import {
   type ReceiverLink,
 } from '@slm/crypto';
 import { ErrorCode, type SealedUpdate } from '@slm/protocol';
-import { FIRST_JOIN_RETRY_DELAYS_MS, joinSession, REJOIN_RETRY_DELAYS_MS } from './join-session';
+import {
+  FIRST_JOIN_RETRY_DELAYS_MS,
+  joinSession,
+  REJOIN_RETRY_DELAYS_MS,
+  UNANSWERED_JOIN_RETRY_MS,
+} from './join-session';
 import type { LiveTransport } from './transport';
 
 export type ReceiverStatus =
@@ -45,6 +50,7 @@ export class ReceiverController {
   private hasJoined = false;
   /** Bumped on every (dis)connect so a slow join can tell it has been overtaken. */
   private connection = 0;
+  private retryTimer?: ReturnType<typeof setTimeout>;
   /** Opening is async; chaining keeps Updates verified in arrival order. */
   private queue: Promise<void> = Promise.resolve();
 
@@ -75,6 +81,8 @@ export class ReceiverController {
 
   dispose(): void {
     this.disposed = true;
+    this.connection++;
+    clearTimeout(this.retryTimer);
     this.transport.close();
   }
 
@@ -88,7 +96,9 @@ export class ReceiverController {
         () => connection === this.connection && !this.disposed,
       );
     } catch {
-      return; // The next reconnect joins again.
+      if (connection !== this.connection || this.disposed) return; // The next connect rejoins.
+      this.retryTimer = setTimeout(() => void this.join(connection), UNANSWERED_JOIN_RETRY_MS);
+      return;
     }
     if (!ack) return;
     if (!ack.ok) {

@@ -1,7 +1,7 @@
 import { generateSessionKey, sealUpdate } from '@slm/crypto';
 import { ErrorCode, type JoinAck, type SealedUpdate } from '@slm/protocol';
 import { ReceiverController } from './receiver-controller';
-import { FIRST_JOIN_RETRY_DELAYS_MS } from './join-session';
+import { FIRST_JOIN_RETRY_DELAYS_MS, UNANSWERED_JOIN_RETRY_MS } from './join-session';
 import { FakeTransport } from './testing/fake-transport';
 
 const SESSION_ID = 'abcDEF0123456789_-xyzA';
@@ -194,6 +194,27 @@ describe('ReceiverController', () => {
     expect(transport.joins).toHaveLength(2);
     expect(controller.message()).toBe('kept');
     expect(controller.integrityFailure()).toBeNull();
+  });
+
+  it('retries a join that got no answer while the connection stayed up', async () => {
+    const { controller, transport } = await setup();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const answer = transport.joinResponse;
+      let unanswered = true;
+      transport.joinResponse = (request) => {
+        if (!unanswered) return answer(request);
+        unanswered = false;
+        throw new Error('operation has timed out');
+      };
+      transport.simulateDisconnect();
+      transport.simulateConnect();
+      await vi.advanceTimersByTimeAsync(UNANSWERED_JOIN_RETRY_MS);
+      await vi.waitFor(() => expect(controller.status()).toBe('live'));
+      expect(transport.joins).toHaveLength(3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('reports a Session that does not exist and stops reconnecting', async () => {
