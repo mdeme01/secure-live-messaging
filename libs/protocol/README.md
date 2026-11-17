@@ -1,7 +1,3 @@
 # protocol
 
-This library was generated with [Nx](https://nx.dev).
-
-## Running unit tests
-
-Run `nx test protocol` to execute the unit tests via [Vitest](https://vitest.dev/).
+Shared wire contract between the web app and the server: REST shapes, socket event names and payloads, error codes and limits. Imported as `@slm/protocol`.

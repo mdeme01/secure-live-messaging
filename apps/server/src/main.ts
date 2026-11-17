@@ -8,17 +8,6 @@ async function main(): Promise<void> {
   const address = await server.listen(port, host);
   console.log(`[ ready ] ${address}`);
 
-  // Lets `nx serve` (and the e2e runner) know the server is ready.
-  if (process.env['NX_READY_SIGNAL_SOCKET']) {
-    // Indirect import keeps bundlers from resolving this dev-only helper.
-    const load = new Function('s', 'return import(s)') as (
-      s: string,
-    ) => Promise<{ emitReadySignal(server: unknown): boolean }>;
-    load('@nx/js/ready-signal')
-      .then((m) => m.emitReadySignal(server.http.server))
-      .catch(() => undefined);
-  }
-
   const shutdown = async () => {
     await server.close();
     process.exit(0);

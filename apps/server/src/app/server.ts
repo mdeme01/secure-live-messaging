@@ -1,12 +1,10 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { Server as SocketServer } from 'socket.io';
-import { API_PREFIX, PROTOCOL_VERSION, SOCKET_PATH, type HealthResponse } from '@slm/protocol';
+import { HEALTH_PATH, PROTOCOL_VERSION, SOCKET_PATH, type HealthResponse } from '@slm/protocol';
 
 export interface ServerOptions {
   /** Enable Fastify's request logger. Off by default so tests stay quiet. */
   logger?: boolean;
-  /** Clock used for anything time-based; injectable so tests can control time. */
-  now?: () => number;
 }
 
 export interface AppServer {
@@ -30,7 +28,7 @@ export function buildServer(options: ServerOptions = {}): AppServer {
     serveClient: false,
   });
 
-  http.get(`${API_PREFIX}/health`, async (): Promise<HealthResponse> => ({
+  http.get(HEALTH_PATH, async (): Promise<HealthResponse> => ({
     status: 'ok',
     protocol: PROTOCOL_VERSION,
   }));

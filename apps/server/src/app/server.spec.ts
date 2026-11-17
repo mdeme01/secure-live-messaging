@@ -1,5 +1,5 @@
 import { io as connect, type Socket } from 'socket.io-client';
-import { PROTOCOL_VERSION, SOCKET_PATH } from '@slm/protocol';
+import { HEALTH_PATH, PROTOCOL_VERSION, SOCKET_PATH } from '@slm/protocol';
 import { buildServer, type AppServer } from './server';
 
 describe('server', () => {
@@ -16,7 +16,7 @@ describe('server', () => {
   });
 
   it('reports health over real HTTP', async () => {
-    const res = await fetch(`${baseUrl}/api/health`);
+    const res = await fetch(`${baseUrl}${HEALTH_PATH}`);
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
