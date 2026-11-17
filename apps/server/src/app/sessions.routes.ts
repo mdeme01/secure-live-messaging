@@ -2,16 +2,25 @@ import type { FastifyInstance } from 'fastify';
 import {
   ErrorCode,
   SESSIONS_PATH,
+  isSenderToken,
   isSessionId,
   validateSealedUpdate,
   type CreateSessionRequest,
   type CreateSessionResponse,
+  type EndReason,
   type ErrorResponse,
 } from '@slm/protocol';
 import { sendError } from './http-errors';
 import type { SessionStore } from './session-store';
 
-export function registerSessionRoutes(http: FastifyInstance, store: SessionStore): void {
+const BEARER = /^Bearer (\S+)$/;
+
+export function registerSessionRoutes(
+  http: FastifyInstance,
+  store: SessionStore,
+  /** Deletes the Session and tells its connected parties. */
+  endSession: (sessionId: string, reason: EndReason) => void,
+): void {
   http.post<{ Body: CreateSessionRequest; Reply: CreateSessionResponse | ErrorResponse }>(
     SESSIONS_PATH,
     async (request, reply) => {
@@ -31,4 +40,15 @@ export function registerSessionRoutes(http: FastifyInstance, store: SessionStore
       return reply.code(201).send({ senderToken: created.senderToken });
     },
   );
+
+  http.delete<{ Params: { id: string } }>(`${SESSIONS_PATH}/:id`, async (request, reply) => {
+    const { id } = request.params;
+    if (!isSessionId(id) || !store.get(id)) return sendError(reply, ErrorCode.SessionNotFound);
+    const token = BEARER.exec(request.headers.authorization ?? '')?.[1];
+    if (!isSenderToken(token) || !store.isSender(id, token)) {
+      return sendError(reply, ErrorCode.Unauthorized);
+    }
+    endSession(id, 'ended-by-sender');
+    return reply.code(204).send();
+  });
 }

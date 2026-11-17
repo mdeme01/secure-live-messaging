@@ -1,10 +1,18 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, inject, signal } from '@angular/core';
 import { DatePipe, DOCUMENT, DecimalPipe } from '@angular/common';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { MAX_MESSAGE_BYTES, parseSenderLink, receiverLinkPath, senderLinkPath } from '@slm/crypto';
+import type { EndReason } from '@slm/protocol';
 import { SenderController, type SenderStatus } from '../../live/sender-controller';
 import { LIVE_TRANSPORT } from '../../live/transport';
+import { SessionApi } from '../../session/session-api';
 import { CopyField } from '../../ui/copy-field';
+
+const ENDED_REASON: Record<EndReason, string> = {
+  'ended-by-sender': 'You ended this session. The message has been deleted from the server.',
+  expired:
+    'This session expired after an hour without activity. The message has been deleted from the server.',
+};
 
 const STATUS_LABEL: Partial<Record<SenderStatus, string>> = {
   connecting: 'Connecting…',
@@ -23,6 +31,19 @@ const STATUS_LABEL: Partial<Record<SenderStatus, string>> = {
       <p role="alert" class="rounded-lg bg-red-50 px-3 py-2 text-red-800">
         This sender link is invalid or incomplete. Create a new session.
       </p>
+    } @else if (controller.status() === 'ended') {
+      @let reason = controller.endedReason();
+      <section
+        role="alert"
+        data-testid="session-ended"
+        class="rounded-2xl border border-slate-200 bg-white p-8"
+      >
+        <h1 class="text-xl font-semibold">Session ended</h1>
+        <p class="mt-2 text-slate-600">{{ reason ? endedReason[reason] : '' }}</p>
+        <a routerLink="/" class="mt-4 inline-block text-sm font-medium underline"
+          >Start a new session</a
+        >
+      </section>
     } @else if (controller.status() === 'not-found') {
       <section role="alert" class="rounded-2xl border border-slate-200 bg-white p-8">
         <h1 class="text-xl font-semibold">This session doesn't exist or has ended</h1>
@@ -110,18 +131,64 @@ const STATUS_LABEL: Partial<Record<SenderStatus, string>> = {
             Keep this private: anyone with it can edit or end the session.
           </p>
         </div>
+        <div class="border-t border-slate-200 pt-6">
+          @if (confirmingEnd()) {
+            <div role="alertdialog" aria-labelledby="end-title" class="space-y-3">
+              <p id="end-title" class="text-sm text-slate-700">
+                End this session for good? The message is deleted from the server and the receiver
+                is told the session has ended. This can't be undone.
+              </p>
+              <div class="flex gap-3">
+                <button
+                  type="button"
+                  data-testid="confirm-end"
+                  class="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                  [disabled]="controller.ending()"
+                  (click)="controller.end()"
+                >
+                  {{ controller.ending() ? 'Ending…' : 'End session' }}
+                </button>
+                <button
+                  type="button"
+                  data-testid="cancel-end"
+                  class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium"
+                  (click)="confirmingEnd.set(false)"
+                >
+                  Keep it open
+                </button>
+              </div>
+            </div>
+          } @else {
+            <button
+              type="button"
+              data-testid="end-session"
+              class="rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
+              (click)="confirmingEnd.set(true)"
+            >
+              End session
+            </button>
+          }
+          @if (controller.endFailed()) {
+            <p role="alert" class="mt-2 text-sm text-red-700">
+              Couldn't end the session. Check your connection and try again.
+            </p>
+          }
+        </div>
       </section>
     }
   `,
 })
 export class SenderPage {
   protected readonly statusLabel = STATUS_LABEL;
+  protected readonly endedReason = ENDED_REASON;
+  protected readonly confirmingEnd = signal(false);
   protected readonly maxBytes = MAX_MESSAGE_BYTES;
   protected readonly controller: SenderController | null;
   protected readonly links: { receiver: string; sender: string } | null;
 
   constructor() {
     const origin = inject(DOCUMENT).location.origin;
+    const api = inject(SessionApi);
     const { paramMap, fragment } = inject(ActivatedRoute).snapshot;
     const link = parseSenderLink(paramMap.get('id'), fragment);
 
@@ -134,6 +201,7 @@ export class SenderPage {
       new SenderController({
         link,
         transport: inject(LIVE_TRANSPORT)({ senderToken: link.senderToken }),
+        endSession: () => api.endSession(link),
       });
 
     if (this.controller) {

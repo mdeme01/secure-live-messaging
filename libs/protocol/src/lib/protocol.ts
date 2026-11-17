@@ -23,6 +23,12 @@ export interface HealthResponse {
 /** Session collection: `POST` creates a Session. */
 export const SESSIONS_PATH = `${API_PREFIX}/sessions`;
 
+/** One Session: `DELETE` ends it, authorized by `Authorization: Bearer {senderToken}`. */
+export const sessionPath = (sessionId: string) => `${SESSIONS_PATH}/${sessionId}`;
+
+/** A Session with no create, join or publish for this long is deleted. */
+export const IDLE_TIMEOUT_MS = 60 * 60 * 1000;
+
 export const LIMITS = {
   /** Largest accepted ciphertext (decoded bytes, including the GCM tag). */
   maxCiphertextBytes: 64 * 1024,
@@ -123,6 +129,8 @@ export const SocketEvent = {
   Update: 'update',
   /** server → Sender: whether a Receiver is connected. */
   Presence: 'presence',
+  /** server → both: the Session was deleted; the server disconnects right after. */
+  Ended: 'session:ended',
 } as const;
 
 /**
@@ -140,6 +148,12 @@ export interface JoinRequest {
 
 export interface Presence {
   receiverConnected: boolean;
+}
+
+export type EndReason = 'ended-by-sender' | 'expired';
+
+export interface SessionEnded {
+  reason: EndReason;
 }
 
 /** `presence` is included for the Sender only. */
@@ -162,6 +176,7 @@ export interface ClientToServerEvents {
 export interface ServerToClientEvents {
   [SocketEvent.Update]: (update: SealedUpdate) => void;
   [SocketEvent.Presence]: (presence: Presence) => void;
+  [SocketEvent.Ended]: (ended: SessionEnded) => void;
 }
 
 export function isJoinRequest(v: unknown): v is JoinRequest {

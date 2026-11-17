@@ -21,6 +21,11 @@ export class RoleSlots {
     return true;
   }
 
+  /** Frees both slots of a Session that no longer exists. */
+  forget(sessionId: string): void {
+    this.bySession.delete(sessionId);
+  }
+
   holder(sessionId: string, role: Role): string | undefined {
     return this.bySession.get(sessionId)?.[role];
   }

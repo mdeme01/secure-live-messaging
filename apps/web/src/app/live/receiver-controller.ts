@@ -5,7 +5,7 @@ import {
   type IntegrityFailureReason,
   type ReceiverLink,
 } from '@slm/crypto';
-import { ErrorCode, type SealedUpdate } from '@slm/protocol';
+import { ErrorCode, type EndReason, type SealedUpdate } from '@slm/protocol';
 import {
   FIRST_JOIN_RETRY_DELAYS_MS,
   joinSession,
@@ -15,7 +15,7 @@ import {
 import type { LiveTransport } from './transport';
 
 export type ReceiverStatus =
-  'connecting' | 'live' | 'reconnecting' | 'not-found' | 'role-taken' | 'error';
+  'connecting' | 'live' | 'reconnecting' | 'ended' | 'not-found' | 'role-taken' | 'error';
 
 const JOIN_ERROR_STATUS: Partial<Record<ErrorCode, ReceiverStatus>> = {
   [ErrorCode.SessionNotFound]: 'not-found',
@@ -38,6 +38,8 @@ export class ReceiverController {
   readonly message = signal<string | null>(null);
   /** When the Receiver accepted the current Message (Receiver's clock). */
   readonly lastUpdatedAt = signal<Date | null>(null);
+  /** Why the Session ended, once the server says it has. */
+  readonly endedReason = signal<EndReason | null>(null);
   /** Why the most recent Update was rejected; cleared by the next verified Update. */
   readonly integrityFailure = signal<IntegrityFailureReason | null>(null);
 
@@ -47,6 +49,8 @@ export class ReceiverController {
   private key?: CryptoKey;
   private lastAcceptedSeq: number | null = null;
   private disposed = false;
+  /** Set once the controller has closed the transport for good. */
+  private stopped = false;
   private hasJoined = false;
   /** Bumped on every (dis)connect so a slow join can tell it has been overtaken. */
   private connection = 0;
@@ -68,7 +72,9 @@ export class ReceiverController {
       return;
     }
     if (this.disposed) return;
-    this.transport.onConnect(() => void this.join(++this.connection));
+    this.transport.onConnect(() => {
+      if (!this.stopped) void this.join(++this.connection);
+    });
     this.transport.onDisconnect(() => {
       this.connection++;
       if (this.status() === 'live' || this.status() === 'connecting') {
@@ -76,11 +82,22 @@ export class ReceiverController {
       }
     });
     this.transport.onUpdate((update) => void this.enqueue(update));
+    this.transport.onEnded(({ reason }) => {
+      this.endedReason.set(reason);
+      this.message.set(null); // Don't keep the plaintext around once the Session is gone.
+      this.status.set('ended');
+      this.stop();
+    });
     this.transport.connect();
   }
 
   dispose(): void {
     this.disposed = true;
+    this.stop();
+  }
+
+  private stop(): void {
+    this.stopped = true;
     this.connection++;
     clearTimeout(this.retryTimer);
     this.transport.close();
@@ -93,17 +110,17 @@ export class ReceiverController {
         this.transport,
         { sessionId: this.link.sessionId, role: 'receiver' },
         this.hasJoined ? REJOIN_RETRY_DELAYS_MS : FIRST_JOIN_RETRY_DELAYS_MS,
-        () => connection === this.connection && !this.disposed,
+        () => connection === this.connection && !this.stopped,
       );
     } catch {
-      if (connection !== this.connection || this.disposed) return; // The next connect rejoins.
+      if (connection !== this.connection || this.stopped) return; // The next connect rejoins.
       this.retryTimer = setTimeout(() => void this.join(connection), UNANSWERED_JOIN_RETRY_MS);
       return;
     }
     if (!ack) return;
     if (!ack.ok) {
       this.status.set(JOIN_ERROR_STATUS[ack.error] ?? 'error');
-      this.transport.close();
+      this.stop();
       return;
     }
     this.hasJoined = true;

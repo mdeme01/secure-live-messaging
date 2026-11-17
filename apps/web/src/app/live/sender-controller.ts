@@ -6,7 +6,7 @@ import {
   sealUpdate,
   type SenderLink,
 } from '@slm/crypto';
-import { ErrorCode } from '@slm/protocol';
+import { ErrorCode, type EndReason } from '@slm/protocol';
 import {
   FIRST_JOIN_RETRY_DELAYS_MS,
   joinSession,
@@ -27,21 +27,28 @@ export type SenderStatus =
   | 'offline'
   | 'error'
   // Terminal: the controller has stopped and closed the transport.
+  | 'ended'
   | 'not-found'
   | 'unauthorized'
   | 'role-taken'
   | 'unverifiable';
 
 const TERMINAL: ReadonlySet<SenderStatus> = new Set([
+  'ended',
   'not-found',
   'unauthorized',
   'role-taken',
   'unverifiable',
 ]);
 
+/** 'not-found': the Session was already gone (e.g. it expired) when the Sender ended it. */
+export type EndSessionResult = 'ended' | 'not-found';
+
 export interface SenderControllerDeps {
   link: SenderLink;
   transport: LiveTransport;
+  /** Deletes the Session on the server (authorized by the Sender Token). */
+  endSession: () => Promise<EndSessionResult>;
   now?: () => Date;
 }
 
@@ -67,9 +74,16 @@ export class SenderController {
   readonly lastSentAt = signal<Date | null>(null);
   /** Whether a Receiver is connected right now, as last reported by the server. */
   readonly receiverConnected = signal(false);
+  /** Why the Session ended, once it has. */
+  readonly endedReason = signal<EndReason | null>(null);
+  /** True while an end request is in flight. */
+  readonly ending = signal(false);
+  /** True if the last end request failed; the Session is still live. */
+  readonly endFailed = signal(false);
 
   private readonly link: SenderLink;
   private readonly transport: LiveTransport;
+  private readonly endSession: () => Promise<EndSessionResult>;
   private readonly now: () => Date;
   private key?: CryptoKey;
   /** Text and Sequence Number of the latest Update the server is known to hold. */
@@ -86,9 +100,10 @@ export class SenderController {
   /** Bumped on every (dis)connect so a slow join or publish can tell it has been overtaken. */
   private connection = 0;
 
-  constructor({ link, transport, now = () => new Date() }: SenderControllerDeps) {
+  constructor({ link, transport, endSession, now = () => new Date() }: SenderControllerDeps) {
     this.link = link;
     this.transport = transport;
+    this.endSession = endSession;
     this.now = now;
   }
 
@@ -104,6 +119,7 @@ export class SenderController {
     this.transport.onPresence(({ receiverConnected }) =>
       this.receiverConnected.set(receiverConnected),
     );
+    this.transport.onEnded(({ reason }) => this.ended(reason));
     this.transport.onDisconnect(() => {
       this.connection++;
       this.joined = false;
@@ -130,6 +146,30 @@ export class SenderController {
       this.timer = undefined;
       void this.flush();
     }, DEBOUNCE_MS);
+  }
+
+  /** Deletes the Session for good. On failure the Session stays live and `endFailed` is set. */
+  async end(): Promise<void> {
+    if (this.stopped() || this.ending()) return;
+    // Freeze the editor: anything typed now would be deleted with the Session unseen.
+    const wasEditable = this.editable();
+    this.editable.set(false);
+    clearTimeout(this.timer);
+    this.timer = undefined;
+    this.ending.set(true);
+    this.endFailed.set(false);
+    let result: EndSessionResult;
+    try {
+      result = await this.endSession();
+    } catch {
+      this.endFailed.set(true);
+      if (!this.stopped()) this.editable.set(wasEditable);
+      return;
+    } finally {
+      this.ending.set(false);
+    }
+    if (result === 'not-found') this.stop('not-found');
+    else this.ended('ended-by-sender');
   }
 
   dispose(): void {
@@ -236,6 +276,12 @@ export class SenderController {
 
     // Edits made meanwhile go now (latest wins), unless the user is still typing.
     if (this.timer === undefined && this.text() !== text) void this.flush();
+  }
+
+  private ended(reason: EndReason): void {
+    if (this.stopped()) return;
+    this.endedReason.set(reason);
+    this.stop('ended');
   }
 
   private stop(status: SenderStatus): void {

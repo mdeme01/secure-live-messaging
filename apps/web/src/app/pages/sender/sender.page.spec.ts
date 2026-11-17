@@ -6,6 +6,7 @@ import { ErrorCode, type JoinAck } from '@slm/protocol';
 import { appRoutes } from '../../app.routes';
 import { FakeTransport } from '../../live/testing/fake-transport';
 import { LIVE_TRANSPORT, type TransportAuth } from '../../live/transport';
+import { SessionApi } from '../../session/session-api';
 
 const id = 'abcDEF0123456789_-xyzA';
 const token = 'T'.repeat(43);
@@ -13,6 +14,7 @@ const token = 'T'.repeat(43);
 async function open(url: string, joinResponse?: () => JoinAck) {
   const transport = new FakeTransport();
   const auths: TransportAuth[] = [];
+  const endSession = vi.fn(async (): Promise<'ended' | 'not-found'> => 'ended');
   if (joinResponse) transport.joinResponse = joinResponse;
   TestBed.configureTestingModule({
     providers: [
@@ -21,6 +23,7 @@ async function open(url: string, joinResponse?: () => JoinAck) {
         provide: LIVE_TRANSPORT,
         useValue: (auth: TransportAuth) => (auths.push(auth), transport),
       },
+      { provide: SessionApi, useValue: { endSession } },
     ],
   });
   const harness = await RouterTestingHarness.create(url);
@@ -30,7 +33,7 @@ async function open(url: string, joinResponse?: () => JoinAck) {
       await harness.fixture.whenStable();
       assertion();
     });
-  return { harness, transport, auths, el, settle };
+  return { harness, transport, auths, endSession, el, settle };
 }
 
 async function newSession(text = '') {
@@ -113,6 +116,38 @@ describe('SenderPage', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('ends the Session only after confirmation', async () => {
+    const { key, joinResponse } = await newSession();
+    const { el, endSession, settle } = await open(`/s/${id}#k=${key}&t=${token}`, joinResponse);
+    const click = (testId: string) =>
+      (el().querySelector(`[data-testid=${testId}]`) as HTMLButtonElement).click();
+    await settle(() => expect(editor(el()).disabled).toBe(false));
+
+    click('end-session');
+    await settle(() => expect(el().textContent).toContain("This can't be undone"));
+    click('cancel-end');
+    await settle(() => expect(el().querySelector('[data-testid=confirm-end]')).toBeNull());
+    expect(endSession).not.toHaveBeenCalled();
+
+    click('end-session');
+    await settle(() => expect(el().querySelector('[data-testid=confirm-end]')).not.toBeNull());
+    click('confirm-end');
+    await settle(() =>
+      expect(el().querySelector('[data-testid=session-ended]')?.textContent).toContain(
+        'You ended this session',
+      ),
+    );
+    expect(endSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('explains a Session that expired', async () => {
+    const { key, joinResponse } = await newSession();
+    const { el, transport, settle } = await open(`/s/${id}#k=${key}&t=${token}`, joinResponse);
+    await settle(() => expect(editor(el()).disabled).toBe(false));
+    transport.simulateEnded({ reason: 'expired' });
+    await settle(() => expect(el().textContent).toContain('expired after an hour'));
   });
 
   it('explains when the link is missing its secrets', async () => {

@@ -2,13 +2,20 @@ import { ChangeDetectionStrategy, Component, DestroyRef, inject } from '@angular
 import { DatePipe } from '@angular/common';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { parseReceiverLink } from '@slm/crypto';
+import type { EndReason } from '@slm/protocol';
 import { ReceiverController, type ReceiverStatus } from '../../live/receiver-controller';
 import { LIVE_TRANSPORT } from '../../live/transport';
+
+const ENDED_REASON: Record<EndReason, string> = {
+  'ended-by-sender': 'The sender ended this session.',
+  expired: 'This session expired after an hour without activity.',
+};
 
 const STATUS_LABEL: Record<ReceiverStatus, string> = {
   connecting: 'Connecting…',
   live: 'Live',
   reconnecting: 'Reconnecting…',
+  ended: 'Session ended',
   'not-found': 'Session ended',
   'role-taken': 'Already has a receiver',
   error: 'Error',
@@ -23,6 +30,21 @@ const STATUS_LABEL: Record<ReceiverStatus, string> = {
       <section role="alert" class="rounded-2xl border border-red-200 bg-red-50 p-8 text-red-900">
         <h1 class="text-xl font-semibold">This link is invalid or incomplete</h1>
         <p class="mt-2">Ask the sender for a new link. Make sure you copied all of it.</p>
+      </section>
+    } @else if (controller.status() === 'ended') {
+      @let reason = controller.endedReason();
+      <section
+        role="alert"
+        data-testid="session-ended"
+        class="rounded-2xl border border-slate-200 bg-white p-8"
+      >
+        <h1 class="text-xl font-semibold">This session has ended</h1>
+        <p class="mt-2 text-slate-600">
+          {{ reason ? endedReason[reason] : '' }} No more updates will arrive.
+        </p>
+        <a routerLink="/" class="mt-4 inline-block text-sm font-medium underline"
+          >Start your own session</a
+        >
       </section>
     } @else if (controller.status() === 'not-found') {
       <section role="alert" class="rounded-2xl border border-slate-200 bg-white p-8">
@@ -95,6 +117,7 @@ const STATUS_LABEL: Record<ReceiverStatus, string> = {
 })
 export class ReceiverPage {
   protected readonly statusLabel = STATUS_LABEL;
+  protected readonly endedReason = ENDED_REASON;
   protected readonly controller: ReceiverController | null;
 
   constructor() {

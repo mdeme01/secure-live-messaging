@@ -6,6 +6,7 @@ import {
   isSenderToken,
   validateSealedUpdate,
   type ClientToServerEvents,
+  type EndReason,
   type HandshakeAuth,
   type Role,
   type ServerToClientEvents,
@@ -29,7 +30,12 @@ export type LiveServer = SocketServer<
 /** Socket.io room holding everyone joined to a Session. */
 export const sessionRoom = (sessionId: string) => `session:${sessionId}`;
 
-export function registerLiveHandlers(io: LiveServer, store: SessionStore): void {
+export interface LiveChannel {
+  /** Tells everyone in a deleted Session why it ended, then disconnects them. */
+  endSession(sessionId: string, reason: EndReason): void;
+}
+
+export function registerLiveHandlers(io: LiveServer, store: SessionStore): LiveChannel {
   const slots = new RoleSlots();
 
   const notifySender = (sessionId: string) => {
@@ -108,4 +114,14 @@ export function registerLiveHandlers(io: LiveServer, store: SessionStore): void 
       ack({ ok: true });
     });
   });
+
+  return {
+    endSession(sessionId, reason) {
+      const room = sessionRoom(sessionId);
+      slots.forget(sessionId);
+      io.to(room).emit(SocketEvent.Ended, { reason });
+      // Same connection, so this arrives after the event; the clients don't auto-reconnect.
+      io.in(room).disconnectSockets();
+    },
+  };
 }
