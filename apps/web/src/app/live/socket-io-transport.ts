@@ -22,6 +22,7 @@ export function socketIoTransport(auth: TransportAuth = {}): LiveTransport {
     onConnect: (handler) => socket.on('connect', handler),
     onDisconnect: (handler) => socket.on('disconnect', () => handler()),
     onUpdate: (handler) => socket.on(SocketEvent.Update, handler),
+    onPresence: (handler) => socket.on(SocketEvent.Presence, handler),
     join: (request) => socket.timeout(ACK_TIMEOUT_MS).emitWithAck(SocketEvent.Join, request),
     publish: (update) => socket.timeout(ACK_TIMEOUT_MS).emitWithAck(SocketEvent.Publish, update),
     connect: () => socket.connect(),

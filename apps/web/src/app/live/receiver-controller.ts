@@ -6,9 +6,16 @@ import {
   type ReceiverLink,
 } from '@slm/crypto';
 import { ErrorCode, type SealedUpdate } from '@slm/protocol';
+import { FIRST_JOIN_RETRY_DELAYS_MS, joinSession, REJOIN_RETRY_DELAYS_MS } from './join-session';
 import type { LiveTransport } from './transport';
 
-export type ReceiverStatus = 'connecting' | 'live' | 'reconnecting' | 'not-found' | 'error';
+export type ReceiverStatus =
+  'connecting' | 'live' | 'reconnecting' | 'not-found' | 'role-taken' | 'error';
+
+const JOIN_ERROR_STATUS: Partial<Record<ErrorCode, ReceiverStatus>> = {
+  [ErrorCode.SessionNotFound]: 'not-found',
+  [ErrorCode.RoleTaken]: 'role-taken',
+};
 
 export interface ReceiverControllerDeps {
   link: ReceiverLink;
@@ -35,6 +42,7 @@ export class ReceiverController {
   private key?: CryptoKey;
   private lastAcceptedSeq: number | null = null;
   private disposed = false;
+  private hasJoined = false;
   /** Bumped on every (dis)connect so a slow join can tell it has been overtaken. */
   private connection = 0;
   /** Opening is async; chaining keeps Updates verified in arrival order. */
@@ -73,16 +81,22 @@ export class ReceiverController {
   private async join(connection: number): Promise<void> {
     let ack;
     try {
-      ack = await this.transport.join({ sessionId: this.link.sessionId, role: 'receiver' });
+      ack = await joinSession(
+        this.transport,
+        { sessionId: this.link.sessionId, role: 'receiver' },
+        this.hasJoined ? REJOIN_RETRY_DELAYS_MS : FIRST_JOIN_RETRY_DELAYS_MS,
+        () => connection === this.connection && !this.disposed,
+      );
     } catch {
       return; // The next reconnect joins again.
     }
-    if (connection !== this.connection) return;
+    if (!ack) return;
     if (!ack.ok) {
-      this.status.set(ack.error === ErrorCode.SessionNotFound ? 'not-found' : 'error');
+      this.status.set(JOIN_ERROR_STATUS[ack.error] ?? 'error');
       this.transport.close();
       return;
     }
+    this.hasJoined = true;
     await this.enqueue(ack.latest);
     if (connection === this.connection) this.status.set('live');
   }

@@ -1,6 +1,7 @@
 import { generateSessionKey, sealUpdate } from '@slm/crypto';
 import { ErrorCode, type JoinAck, type SealedUpdate } from '@slm/protocol';
 import { ReceiverController } from './receiver-controller';
+import { FIRST_JOIN_RETRY_DELAYS_MS } from './join-session';
 import { FakeTransport } from './testing/fake-transport';
 
 const SESSION_ID = 'abcDEF0123456789_-xyzA';
@@ -247,5 +248,63 @@ describe('ReceiverController', () => {
     await new Promise((r) => setTimeout(r, 10));
 
     expect(controller.status()).toBe('connecting');
+  });
+
+  describe('when the Receiver role is taken', () => {
+    beforeEach(() => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }));
+    afterEach(() => vi.useRealTimers());
+
+    it('retries once, then explains that the Session already has a Receiver', async () => {
+      const { encoded } = await generateSessionKey();
+      const transport = new FakeTransport();
+      transport.joinResponse = () => ({ ok: false, error: ErrorCode.RoleTaken });
+      const controller = new ReceiverController({
+        link: { sessionId: SESSION_ID, sessionKey: encoded },
+        transport,
+      });
+      await controller.start();
+      await vi.waitFor(() => expect(transport.joins).toHaveLength(1));
+      expect(controller.status()).toBe('connecting');
+
+      await vi.advanceTimersByTimeAsync(FIRST_JOIN_RETRY_DELAYS_MS[0]);
+
+      await vi.waitFor(() => expect(controller.status()).toBe('role-taken'));
+      expect(transport.joins).toHaveLength(2);
+      expect(transport.closed).toBe(true);
+      expect(controller.message()).toBeNull();
+    });
+
+    it('joins once a refreshed Receiver’s old connection has gone', async () => {
+      const { encoded, key } = await generateSessionKey();
+      const latest = await sealUpdate(key, SESSION_ID, 0, 'hello');
+      const transport = new FakeTransport();
+      let refusals = 1;
+      transport.joinResponse = () =>
+        refusals-- > 0 ? { ok: false, error: ErrorCode.RoleTaken } : { ok: true, latest };
+      const controller = new ReceiverController({
+        link: { sessionId: SESSION_ID, sessionKey: encoded },
+        transport,
+      });
+      await controller.start();
+      await vi.advanceTimersByTimeAsync(FIRST_JOIN_RETRY_DELAYS_MS[0]);
+
+      await vi.waitFor(() => expect(controller.status()).toBe('live'));
+      expect(controller.message()).toBe('hello');
+    });
+
+    it('stops retrying when disposed', async () => {
+      const { encoded } = await generateSessionKey();
+      const transport = new FakeTransport();
+      transport.joinResponse = () => ({ ok: false, error: ErrorCode.RoleTaken });
+      const controller = new ReceiverController({
+        link: { sessionId: SESSION_ID, sessionKey: encoded },
+        transport,
+      });
+      await controller.start();
+      await vi.waitFor(() => expect(transport.joins).toHaveLength(1));
+      controller.dispose();
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(transport.joins).toHaveLength(1);
+    });
   });
 });

@@ -121,6 +121,8 @@ export const SocketEvent = {
   Publish: 'update:publish',
   /** server → client: a new latest Update. */
   Update: 'update',
+  /** server → Sender: whether a Receiver is connected. */
+  Presence: 'presence',
 } as const;
 
 export type Role = 'sender' | 'receiver';
@@ -130,7 +132,13 @@ export interface JoinRequest {
   role: Role;
 }
 
-export type JoinAck = { ok: true; latest: SealedUpdate } | { ok: false; error: ErrorCode };
+export interface Presence {
+  receiverConnected: boolean;
+}
+
+/** `presence` is included for the Sender only. */
+export type JoinAck =
+  { ok: true; latest: SealedUpdate; presence?: Presence } | { ok: false; error: ErrorCode };
 
 export type PublishAck = { ok: true } | { ok: false; error: ErrorCode };
 
@@ -147,6 +155,7 @@ export interface ClientToServerEvents {
 
 export interface ServerToClientEvents {
   [SocketEvent.Update]: (update: SealedUpdate) => void;
+  [SocketEvent.Presence]: (presence: Presence) => void;
 }
 
 export function isJoinRequest(v: unknown): v is JoinRequest {

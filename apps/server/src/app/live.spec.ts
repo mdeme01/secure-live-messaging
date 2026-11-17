@@ -65,7 +65,11 @@ describe('live channel', () => {
         sessionId: session.sessionId,
         role: 'sender',
       });
-      expect(ack).toEqual({ ok: true, latest: session.update0 });
+      expect(ack).toEqual({
+        ok: true,
+        latest: session.update0,
+        presence: { receiverConnected: false },
+      });
       return { ...session, sender };
     }
 
@@ -108,11 +112,14 @@ describe('live channel', () => {
       expect(await sender.emitWithAck(SocketEvent.Publish, update)).toEqual({ ok: true });
       expect(await received).toEqual(update);
 
-      const lateAck = await (
-        await client()
-      ).emitWithAck(SocketEvent.Join, {
-        sessionId,
-        role: 'receiver',
+      // The Receiver leaves; whoever opens the link next gets the latest Update.
+      receiver.disconnect();
+      let lateAck;
+      await vi.waitFor(async () => {
+        lateAck = await (
+          await client()
+        ).emitWithAck(SocketEvent.Join, { sessionId, role: 'receiver' });
+        expect(lateAck.ok).toBe(true);
       });
       expect(lateAck).toEqual({ ok: true, latest: update });
     });
@@ -163,6 +170,113 @@ describe('live channel', () => {
           ciphertext: 'A'.repeat(90_000),
         }),
       ).toEqual({ ok: false, error: ErrorCode.PayloadTooLarge });
+    });
+  });
+
+  describe('one sender, one receiver', () => {
+    const join = (c: TestClient, sessionId: string, role: 'sender' | 'receiver') =>
+      c.emitWithAck(SocketEvent.Join, { sessionId, role });
+    const nextPresence = (c: TestClient) =>
+      new Promise((resolve) => c.once(SocketEvent.Presence, resolve));
+
+    it('refuses a second Receiver with ROLE_TAKEN, and does not relay Updates to it', async () => {
+      const { sessionId, senderToken } = await createSession(baseUrl);
+      await join(await client(), sessionId, 'receiver');
+      const second = await client();
+
+      expect(await join(second, sessionId, 'receiver')).toEqual({
+        ok: false,
+        error: ErrorCode.RoleTaken,
+      });
+
+      const leaked = vi.fn();
+      second.on(SocketEvent.Update, leaked);
+      const sender = await client({ senderToken });
+      await join(sender, sessionId, 'sender');
+      await sender.emitWithAck(SocketEvent.Publish, fakeUpdate(1));
+      await new Promise((r) => setTimeout(r, 50));
+      expect(leaked).not.toHaveBeenCalled();
+    });
+
+    it('refuses a second Sender with ROLE_TAKEN', async () => {
+      const { sessionId, senderToken } = await createSession(baseUrl);
+      await join(await client({ senderToken }), sessionId, 'sender');
+      expect(await join(await client({ senderToken }), sessionId, 'sender')).toEqual({
+        ok: false,
+        error: ErrorCode.RoleTaken,
+      });
+    });
+
+    it('lets the same socket join again, e.g. to resync', async () => {
+      const { sessionId, senderToken } = await createSession(baseUrl);
+      const sender = await client({ senderToken });
+      await join(sender, sessionId, 'sender');
+      expect((await join(sender, sessionId, 'sender')).ok).toBe(true);
+    });
+
+    it('frees the Receiver slot on disconnect so a refreshed Receiver can rejoin', async () => {
+      const { sessionId } = await createSession(baseUrl);
+      const first = await client();
+      await join(first, sessionId, 'receiver');
+      first.disconnect();
+
+      await vi.waitFor(async () => {
+        expect((await join(await client(), sessionId, 'receiver')).ok).toBe(true);
+      });
+    });
+
+    it('frees the Sender slot on disconnect', async () => {
+      const { sessionId, senderToken } = await createSession(baseUrl);
+      const first = await client({ senderToken });
+      await join(first, sessionId, 'sender');
+      first.disconnect();
+
+      await vi.waitFor(async () => {
+        const again = await client({ senderToken });
+        expect((await join(again, sessionId, 'sender')).ok).toBe(true);
+      });
+    });
+
+    it('tells the Sender when the Receiver connects and disconnects', async () => {
+      const { sessionId, senderToken } = await createSession(baseUrl);
+      const sender = await client({ senderToken });
+      await join(sender, sessionId, 'sender');
+
+      const receiver = await client();
+      const connected = nextPresence(sender);
+      await join(receiver, sessionId, 'receiver');
+      expect(await connected).toEqual({ receiverConnected: true });
+
+      const disconnected = nextPresence(sender);
+      receiver.disconnect();
+      expect(await disconnected).toEqual({ receiverConnected: false });
+    });
+
+    it('includes Receiver presence in the Sender’s join ack', async () => {
+      const { sessionId, senderToken } = await createSession(baseUrl);
+      await join(await client(), sessionId, 'receiver');
+      expect(await join(await client({ senderToken }), sessionId, 'sender')).toMatchObject({
+        ok: true,
+        presence: { receiverConnected: true },
+      });
+    });
+
+    it('does not count a rejected second Receiver as presence, nor its disconnect', async () => {
+      const { sessionId, senderToken } = await createSession(baseUrl);
+      const sender = await client({ senderToken });
+      await join(sender, sessionId, 'sender');
+      const connected = nextPresence(sender);
+      await join(await client(), sessionId, 'receiver');
+      await connected;
+
+      const events: unknown[] = [];
+      sender.on(SocketEvent.Presence, (p) => events.push(p));
+      const second = await client();
+      await join(second, sessionId, 'receiver');
+      second.disconnect();
+      await new Promise((r) => setTimeout(r, 50));
+
+      expect(events).toEqual([]);
     });
   });
 });

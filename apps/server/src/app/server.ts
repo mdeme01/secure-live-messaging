@@ -55,6 +55,9 @@ export function buildServer(options: ServerOptions = {}): AppServer {
   const io: LiveServer = new SocketServer(http.server, {
     path: SOCKET_PATH,
     serveClient: false,
+    // A connection that vanished without closing frees its role slot within ~15 s.
+    pingInterval: 10_000,
+    pingTimeout: 5_000,
   });
 
   http.get(HEALTH_PATH, async (): Promise<HealthResponse> => ({

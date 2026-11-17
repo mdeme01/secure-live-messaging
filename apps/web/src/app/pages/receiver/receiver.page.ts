@@ -10,6 +10,7 @@ const STATUS_LABEL: Record<ReceiverStatus, string> = {
   live: 'Live',
   reconnecting: 'Reconnecting…',
   'not-found': 'Session ended',
+  'role-taken': 'Already has a receiver',
   error: 'Error',
 };
 
@@ -30,6 +31,14 @@ const STATUS_LABEL: Record<ReceiverStatus, string> = {
         <a routerLink="/" class="mt-4 inline-block text-sm font-medium underline"
           >Start your own session</a
         >
+      </section>
+    } @else if (controller.status() === 'role-taken') {
+      <section role="alert" class="rounded-2xl border border-slate-200 bg-white p-8">
+        <h1 class="text-xl font-semibold">This session already has a receiver</h1>
+        <p class="mt-2 text-slate-600">
+          Only one person can view a session at a time. If that was you in another tab or browser,
+          close it and reload this page.
+        </p>
       </section>
     } @else if (controller.status() === 'error') {
       <section role="alert" class="rounded-2xl border border-red-200 bg-red-50 p-8 text-red-900">
