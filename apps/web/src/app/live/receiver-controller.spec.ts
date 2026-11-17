@@ -7,6 +7,9 @@ const SESSION_ID = 'abcDEF0123456789_-xyzA';
 const OTHER_SESSION_ID = 'zzzDEF0123456789_-xyzA';
 const NOW = new Date('2026-01-01T10:00:00Z');
 
+/** Changes the first encoded character, i.e. flips bits of the first ciphertext byte. */
+const flipFirstChar = (encoded: string) => (encoded[0] === 'A' ? 'B' : 'A') + encoded.slice(1);
+
 async function setup(latestText = '') {
   const { encoded, key } = await generateSessionKey();
   const seal = (seq: number, text: string, sessionId = SESSION_ID) =>
@@ -78,6 +81,19 @@ describe('ReceiverController', () => {
       async (seal) => ({ ...(await seal(3, 'evil')), iv: 'A'.repeat(16) }),
     ],
     [
+      'an Update with one ciphertext byte flipped',
+      'authentication-failed',
+      async (seal) => {
+        const update = await seal(3, 'evil');
+        return { ...update, ciphertext: flipFirstChar(update.ciphertext) };
+      },
+    ],
+    [
+      'an Update whose ciphertext is not even base64url',
+      'malformed',
+      async (seal) => ({ ...(await seal(3, 'evil')), ciphertext: '!!not-base64!!' }),
+    ],
+    [
       'an Update from another Session',
       'authentication-failed',
       (seal) => seal(3, 'spliced', OTHER_SESSION_ID),
@@ -91,6 +107,31 @@ describe('ReceiverController', () => {
 
     await vi.waitFor(() => expect(controller.integrityFailure()).toBe(reason));
     expect(controller.message()).toBe('verified');
+  });
+
+  it('clears the Integrity Failure when the next valid Update arrives', async () => {
+    const { controller, transport, seal } = await setup();
+    transport.simulateUpdate(await seal(1, 'verified'));
+    const forged = await seal(2, 'forged');
+    transport.simulateUpdate({ ...forged, ciphertext: flipFirstChar(forged.ciphertext) });
+    await vi.waitFor(() => expect(controller.integrityFailure()).toBe('authentication-failed'));
+    expect(controller.message()).toBe('verified');
+
+    transport.simulateUpdate(await seal(2, 'genuine'));
+
+    await vi.waitFor(() => expect(controller.message()).toBe('genuine'));
+    expect(controller.integrityFailure()).toBeNull();
+  });
+
+  it('does not let a forged Update advance the Sequence Number', async () => {
+    const { controller, transport, seal } = await setup();
+    const forged = await seal(50, 'forged');
+    transport.simulateUpdate({ ...forged, ciphertext: flipFirstChar(forged.ciphertext) });
+    await vi.waitFor(() => expect(controller.integrityFailure()).not.toBeNull());
+
+    // A genuine Update with a lower seq than the forged one is still accepted.
+    transport.simulateUpdate(await seal(1, 'genuine'));
+    await vi.waitFor(() => expect(controller.message()).toBe('genuine'));
   });
 
   it('shows Reconnecting while disconnected and rejoins without a false alarm', async () => {
