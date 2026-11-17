@@ -7,6 +7,8 @@ import {
 } from '@slm/protocol';
 import type { LiveTransport, TransportAuth } from './transport';
 
+const ACK_TIMEOUT_MS = 10_000;
+
 /** Same-origin socket.io connection. The Sender Token travels in the handshake `auth`, never the URL. */
 export function socketIoTransport(auth: TransportAuth = {}): LiveTransport {
   const socket: Socket<ServerToClientEvents, ClientToServerEvents> = io({
@@ -20,7 +22,8 @@ export function socketIoTransport(auth: TransportAuth = {}): LiveTransport {
     onConnect: (handler) => socket.on('connect', handler),
     onDisconnect: (handler) => socket.on('disconnect', () => handler()),
     onUpdate: (handler) => socket.on(SocketEvent.Update, handler),
-    join: (request) => socket.emitWithAck(SocketEvent.Join, request),
+    join: (request) => socket.timeout(ACK_TIMEOUT_MS).emitWithAck(SocketEvent.Join, request),
+    publish: (update) => socket.timeout(ACK_TIMEOUT_MS).emitWithAck(SocketEvent.Publish, update),
     connect: () => socket.connect(),
     close: () => socket.disconnect(),
   };

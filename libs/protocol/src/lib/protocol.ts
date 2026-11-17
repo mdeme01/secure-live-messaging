@@ -117,6 +117,8 @@ export function validateSealedUpdate(
 export const SocketEvent = {
   /** client → server, with ack: join a Session in a role. */
   Join: 'session:join',
+  /** client → server, with ack: the Sender publishes a new Update. */
+  Publish: 'update:publish',
   /** server → client: a new latest Update. */
   Update: 'update',
 } as const;
@@ -130,9 +132,17 @@ export interface JoinRequest {
 
 export type JoinAck = { ok: true; latest: SealedUpdate } | { ok: false; error: ErrorCode };
 
+export type PublishAck = { ok: true } | { ok: false; error: ErrorCode };
+
+/** socket.io handshake `auth` payload. The Sender Token never goes in the URL. */
+export interface HandshakeAuth {
+  senderToken?: string;
+}
+
 /** Typed event maps for socket.io on both sides. */
 export interface ClientToServerEvents {
   [SocketEvent.Join]: (request: JoinRequest, ack: (response: JoinAck) => void) => void;
+  [SocketEvent.Publish]: (update: SealedUpdate, ack: (response: PublishAck) => void) => void;
 }
 
 export interface ServerToClientEvents {
