@@ -16,7 +16,7 @@ async function open(url: string, joinResponse?: () => JoinAck) {
     providers: [provideRouter(appRoutes), { provide: LIVE_TRANSPORT, useValue: () => transport }],
   });
   const harness = await RouterTestingHarness.create(url);
-  return { harness, el: () => harness.routeNativeElement as HTMLElement };
+  return { harness, transport, el: () => harness.routeNativeElement as HTMLElement };
 }
 
 describe('ReceiverPage', () => {
@@ -56,6 +56,42 @@ describe('ReceiverPage', () => {
       expect(el().querySelector('[role=alert]')?.textContent).toContain("couldn't be verified");
     });
     expect(el().textContent).not.toContain('secret');
+  });
+
+  it('warns about a tampered Update, keeps the last verified Message, and clears on the next', async () => {
+    const { encoded, key } = await generateSessionKey();
+    const latest = await sealUpdate(key, id, 0, 'verified text');
+    const { harness, el, transport } = await open(`/r/${id}#k=${encoded}`, () => ({
+      ok: true,
+      latest,
+    }));
+    const banner = () => el().querySelector('[data-testid=integrity-banner]');
+    const settle = (assertion: () => void) =>
+      vi.waitFor(async () => {
+        await harness.fixture.whenStable();
+        assertion();
+      });
+    await settle(() => expect(el().querySelector('[data-testid=message]')).not.toBeNull());
+    expect(banner()).toBeNull();
+
+    const forged = await sealUpdate(key, id, 1, 'tampered text');
+    const flipped = (forged.ciphertext[0] === 'A' ? 'B' : 'A') + forged.ciphertext.slice(1);
+    transport.simulateUpdate({ ...forged, ciphertext: flipped });
+
+    await settle(() =>
+      expect(banner()?.textContent).toContain(
+        'Latest update failed integrity check — showing last verified message',
+      ),
+    );
+    expect(banner()?.getAttribute('role')).toBe('alert');
+    expect(el().querySelector('[data-testid=message]')?.textContent?.trim()).toBe('verified text');
+    expect(el().textContent).not.toContain('tampered text');
+
+    transport.simulateUpdate(await sealUpdate(key, id, 1, 'next genuine text'));
+    await settle(() => expect(banner()).toBeNull());
+    expect(el().querySelector('[data-testid=message]')?.textContent?.trim()).toBe(
+      'next genuine text',
+    );
   });
 
   it('explains a link without its key', async () => {

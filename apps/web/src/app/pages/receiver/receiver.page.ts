@@ -44,6 +44,15 @@ const STATUS_LABEL: Record<ReceiverStatus, string> = {
             <span>Last update received {{ at | date: 'HH:mm:ss' }}</span>
           }
         </div>
+        @if (controller.integrityFailure() && controller.message() !== null) {
+          <p
+            role="alert"
+            data-testid="integrity-banner"
+            class="mt-4 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+          >
+            Latest update failed integrity check — showing last verified message
+          </p>
+        }
         @switch (controller.message()) {
           @case (null) {
             @if (controller.integrityFailure()) {
