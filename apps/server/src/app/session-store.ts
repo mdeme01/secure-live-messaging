@@ -1,5 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import type { SealedUpdate } from '@slm/protocol';
+import { IDLE_TIMEOUT_MS, type SealedUpdate } from '@slm/protocol';
 
 /**
  * In-memory Sessions. Holds only what the server is allowed to know:
@@ -20,6 +20,8 @@ export type PublishResult =
 
 export interface SessionStoreOptions {
   maxSessions: number;
+  /** A Session with no activity for this long is removed by `expireIdle`. */
+  idleTimeoutMs?: number;
   now?: () => number;
 }
 
@@ -36,10 +38,16 @@ export class SessionStore {
   private readonly sessions = new Map<string, StoredSession>();
 
   private readonly maxSessions: number;
+  private readonly idleTimeoutMs: number;
   private readonly now: () => number;
 
-  constructor({ maxSessions, now = Date.now }: SessionStoreOptions) {
+  constructor({
+    maxSessions,
+    idleTimeoutMs = IDLE_TIMEOUT_MS,
+    now = Date.now,
+  }: SessionStoreOptions) {
     this.maxSessions = maxSessions;
+    this.idleTimeoutMs = idleTimeoutMs;
     this.now = now;
   }
 
@@ -70,6 +78,21 @@ export class SessionStore {
   touch(sessionId: string): void {
     const session = this.sessions.get(sessionId);
     if (session) session.lastActivityAt = this.now();
+  }
+
+  /** Removes a Session; returns whether it existed. */
+  delete(sessionId: string): boolean {
+    return this.sessions.delete(sessionId);
+  }
+
+  /** Removes every Session idle for the timeout and returns their IDs. */
+  expireIdle(): string[] {
+    const cutoff = this.now() - this.idleTimeoutMs;
+    const expired = [...this.sessions]
+      .filter(([, session]) => session.lastActivityAt <= cutoff)
+      .map(([id]) => id);
+    expired.forEach((id) => this.sessions.delete(id));
+    return expired;
   }
 
   get(sessionId: string): StoredSession | undefined {

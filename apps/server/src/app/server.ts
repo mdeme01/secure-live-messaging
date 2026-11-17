@@ -19,9 +19,16 @@ export interface ServerOptions {
   logger?: boolean;
   /** Maximum number of live Sessions. */
   maxSessions?: number;
+  /** Idle time after which a Session is deleted (default IDLE_TIMEOUT_MS). */
+  idleTimeoutMs?: number;
+  /** Clock in ms since epoch; injectable so tests can expire Sessions. */
+  now?: () => number;
 }
 
 const DEFAULT_MAX_SESSIONS = 1000;
+
+/** How often idle Sessions are swept; one may outlive the timeout by up to this much. */
+const EXPIRY_SWEEP_INTERVAL_MS = 60_000;
 
 /** Room for the largest base64url ciphertext plus JSON overhead. */
 const BODY_LIMIT_BYTES = 2 * LIMITS.maxCiphertextBytes;
@@ -31,6 +38,8 @@ export interface AppServer {
   io: LiveServer;
   /** Start listening; resolves with the bound address (use port 0 for a random port). */
   listen(port: number, host?: string): Promise<string>;
+  /** Deletes idle Sessions now and tells their parties (also runs on a timer). */
+  expireIdleSessions(): void;
   close(): Promise<void>;
 }
 
@@ -40,7 +49,11 @@ export interface AppServer {
  */
 export function buildServer(options: ServerOptions = {}): AppServer {
   const http = Fastify({ logger: options.logger ?? false, bodyLimit: BODY_LIMIT_BYTES });
-  const store = new SessionStore({ maxSessions: options.maxSessions ?? DEFAULT_MAX_SESSIONS });
+  const store = new SessionStore({
+    maxSessions: options.maxSessions ?? DEFAULT_MAX_SESSIONS,
+    idleTimeoutMs: options.idleTimeoutMs,
+    now: options.now,
+  });
 
   // Uniform error bodies for anything Fastify rejects before our handlers run.
   http.setErrorHandler<{ statusCode?: number }>((error, _request, reply) => {
@@ -64,16 +77,24 @@ export function buildServer(options: ServerOptions = {}): AppServer {
     status: 'ok',
     protocol: PROTOCOL_VERSION,
   }));
-  registerSessionRoutes(http, store);
-  registerLiveHandlers(io, store);
+  const live = registerLiveHandlers(io, store);
+  registerSessionRoutes(http, store, live);
+
+  const expireIdleSessions = () => {
+    for (const sessionId of store.expireIdle()) live.endSession(sessionId, 'expired');
+  };
+  const sweep = setInterval(expireIdleSessions, EXPIRY_SWEEP_INTERVAL_MS);
+  sweep.unref();
 
   return {
     http,
     io,
+    expireIdleSessions,
     async listen(port, host = 'localhost') {
       return http.listen({ port, host });
     },
     async close() {
+      clearInterval(sweep);
       await io.close();
       await http.close();
     },

@@ -1,4 +1,11 @@
-import type { JoinAck, JoinRequest, Presence, PublishAck, SealedUpdate } from '@slm/protocol';
+import type {
+  JoinAck,
+  JoinRequest,
+  Presence,
+  PublishAck,
+  SealedUpdate,
+  SessionEnded,
+} from '@slm/protocol';
 import type { LiveTransport } from '../transport';
 
 /** In-memory LiveTransport for controller tests. Drive it with the simulate* methods. */
@@ -21,6 +28,7 @@ export class FakeTransport implements LiveTransport {
   private disconnectHandlers: Array<() => void> = [];
   private updateHandlers: Array<(update: SealedUpdate) => void> = [];
   private presenceHandlers: Array<(presence: Presence) => void> = [];
+  private endedHandlers: Array<(ended: SessionEnded) => void> = [];
 
   onConnect(handler: () => void): void {
     this.connectHandlers.push(handler);
@@ -33,6 +41,9 @@ export class FakeTransport implements LiveTransport {
   }
   onPresence(handler: (presence: Presence) => void): void {
     this.presenceHandlers.push(handler);
+  }
+  onEnded(handler: (ended: SessionEnded) => void): void {
+    this.endedHandlers.push(handler);
   }
   async join(request: JoinRequest): Promise<JoinAck> {
     this.joins.push(request);
@@ -63,5 +74,10 @@ export class FakeTransport implements LiveTransport {
   }
   simulatePresence(presence: Presence): void {
     this.presenceHandlers.forEach((h) => h(presence));
+  }
+  /** The server ends the Session: the event, then a server-side disconnect. */
+  simulateEnded(ended: SessionEnded): void {
+    this.endedHandlers.forEach((h) => h(ended));
+    this.simulateDisconnect();
   }
 }

@@ -8,7 +8,11 @@ const SESSION_ID = 'abcDEF0123456789_-xyzA';
 const TOKEN = 'T'.repeat(43);
 const NOW = new Date('2026-01-01T10:00:00Z');
 
-async function setup({ latestText = '', latestSeq = 0 } = {}) {
+async function setup({
+  latestText = '',
+  latestSeq = 0,
+  endSession = async (): Promise<void> => undefined,
+} = {}) {
   const { encoded, key } = await generateSessionKey();
   let latest: SealedUpdate = await sealUpdate(key, SESSION_ID, latestSeq, latestText);
 
@@ -24,6 +28,7 @@ async function setup({ latestText = '', latestSeq = 0 } = {}) {
     link: { sessionId: SESSION_ID, sessionKey: encoded, senderToken: TOKEN },
     transport,
     now: () => NOW,
+    endSession,
   });
   await controller.start();
   await vi.waitFor(() => expect(controller.status()).toBe('ready'));
@@ -184,6 +189,44 @@ describe('SenderController', () => {
     controller.setText('é'.repeat(MAX_MESSAGE_BYTES / 2 + 1));
     transport.simulateDisconnect();
     expect(controller.status()).toBe('too-long');
+  });
+
+  it('ends the Session on request and stops', async () => {
+    const endSession = vi.fn(async (): Promise<void> => undefined);
+    const { controller, transport } = await setup({ endSession });
+
+    await controller.end();
+
+    expect(endSession).toHaveBeenCalledTimes(1);
+    expect(controller.status()).toBe('ended');
+    expect(controller.endedReason()).toBe('ended-by-sender');
+    expect(controller.editable()).toBe(false);
+    expect(transport.closed).toBe(true);
+  });
+
+  it('stays usable and reports it when ending the Session fails', async () => {
+    const { controller } = await setup({
+      endSession: async () => {
+        throw new Error('offline');
+      },
+    });
+
+    await controller.end();
+
+    expect(controller.endFailed()).toBe(true);
+    expect(controller.status()).toBe('ready');
+    expect(controller.editable()).toBe(true);
+  });
+
+  it('stops when the server says the Session expired', async () => {
+    const { controller, transport } = await setup();
+    controller.setText('unsent');
+    transport.simulateEnded({ reason: 'expired' });
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+
+    expect(controller.status()).toBe('ended');
+    expect(controller.endedReason()).toBe('expired');
+    expect(transport.published).toEqual([]);
   });
 
   it('abandons a publish cut off by a disconnect and continues from the server’s state', async () => {

@@ -217,6 +217,20 @@ describe('ReceiverController', () => {
     }
   });
 
+  it.each(['ended-by-sender', 'expired'] as const)(
+    'reports a Session that ended (%s) and stops',
+    async (reason) => {
+      const { controller, transport } = await setup('last words');
+      transport.simulateEnded({ reason });
+
+      expect(controller.status()).toBe('ended');
+      expect(controller.endedReason()).toBe(reason);
+      expect(transport.closed).toBe(true);
+      transport.simulateConnect();
+      expect(transport.joins).toHaveLength(1);
+    },
+  );
+
   it('reports a Session that does not exist and stops reconnecting', async () => {
     const { encoded } = await generateSessionKey();
     const transport = new FakeTransport();

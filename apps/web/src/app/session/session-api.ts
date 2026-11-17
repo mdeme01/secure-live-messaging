@@ -1,6 +1,7 @@
 import { Injectable } from '@angular/core';
 import {
   SESSIONS_PATH,
+  sessionPath,
   type CreateSessionRequest,
   type CreateSessionResponse,
   type ErrorCode,
@@ -30,5 +31,21 @@ export class SessionApi {
     const body = await response.json().catch(() => null);
     if (!response.ok) throw new ApiError(body?.error ?? 'UNKNOWN');
     return body as CreateSessionResponse;
+  }
+
+  /** Deletes a Session. One that is already gone counts as ended. */
+  async endSession(sessionId: string, senderToken: string): Promise<void> {
+    let response: Response;
+    try {
+      response = await fetch(sessionPath(sessionId), {
+        method: 'DELETE',
+        headers: { authorization: `Bearer ${senderToken}` },
+      });
+    } catch {
+      throw new ApiError('NETWORK');
+    }
+    if (response.ok || response.status === 404) return;
+    const body = await response.json().catch(() => null);
+    throw new ApiError(body?.error ?? 'UNKNOWN');
   }
 }

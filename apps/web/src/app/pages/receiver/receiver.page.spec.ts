@@ -114,6 +114,30 @@ describe('ReceiverPage', () => {
     }
   });
 
+  it.each([
+    ['ended-by-sender', 'The sender ended this session.'],
+    ['expired', 'expired after an hour without activity'],
+  ] as const)('tells the Receiver the Session ended (%s)', async (reason, text) => {
+    const { encoded, key } = await generateSessionKey();
+    const latest = await sealUpdate(key, id, 0, 'secret');
+    const { harness, transport, el } = await open(`/r/${id}#k=${encoded}`, () => ({
+      ok: true,
+      latest,
+    }));
+    const stable = async (assertion: () => void) =>
+      vi.waitFor(async () => {
+        await harness.fixture.whenStable();
+        assertion();
+      });
+    await stable(() => expect(el().querySelector('[data-testid=message]')).not.toBeNull());
+
+    transport.simulateEnded({ reason });
+    await stable(() =>
+      expect(el().querySelector('[data-testid=session-ended]')?.textContent).toContain(text),
+    );
+    expect(el().textContent).not.toContain('secret');
+  });
+
   it('explains a link without its key', async () => {
     const { el } = await open(`/r/${id}`);
     expect(el().querySelector('[role=alert]')?.textContent).toContain('invalid or incomplete');
