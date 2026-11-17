@@ -39,7 +39,7 @@ export interface AppServer {
  */
 export function buildServer(options: ServerOptions = {}): AppServer {
   const http = Fastify({ logger: options.logger ?? false, bodyLimit: BODY_LIMIT_BYTES });
-  const store = new SessionStore(options.maxSessions ?? DEFAULT_MAX_SESSIONS);
+  const store = new SessionStore({ maxSessions: options.maxSessions ?? DEFAULT_MAX_SESSIONS });
 
   // Uniform error bodies for anything Fastify rejects before our handlers run.
   http.setErrorHandler<{ statusCode?: number }>((error, _request, reply) => {

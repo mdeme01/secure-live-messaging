@@ -1,4 +1,4 @@
-import type { JoinAck, JoinRequest, SealedUpdate } from '@slm/protocol';
+import type { JoinAck, JoinRequest, PublishAck, SealedUpdate } from '@slm/protocol';
 import type { LiveTransport } from '../transport';
 
 /** In-memory LiveTransport for controller tests. Drive it with the simulate* methods. */
@@ -10,6 +10,12 @@ export class FakeTransport implements LiveTransport {
   joinResponse: (request: JoinRequest) => JoinAck = () => {
     throw new Error('FakeTransport: set joinResponse before connecting');
   };
+
+  readonly published: SealedUpdate[] = [];
+  /** What the "server" answers to update:publish; return a pending promise to hold the ack. */
+  publishResponse: (update: SealedUpdate) => PublishAck | Promise<PublishAck> = () => ({
+    ok: true,
+  });
 
   private connectHandlers: Array<() => void> = [];
   private disconnectHandlers: Array<() => void> = [];
@@ -27,6 +33,10 @@ export class FakeTransport implements LiveTransport {
   async join(request: JoinRequest): Promise<JoinAck> {
     this.joins.push(request);
     return this.joinResponse(request);
+  }
+  async publish(update: SealedUpdate): Promise<PublishAck> {
+    this.published.push(update);
+    return this.publishResponse(update);
   }
   connect(): void {
     this.simulateConnect();
