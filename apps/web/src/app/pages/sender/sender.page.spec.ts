@@ -86,6 +86,35 @@ describe('SenderPage', () => {
     await settle(() => expect(el().textContent).toContain("isn't valid for this session"));
   });
 
+  it('shows whether the Receiver is connected', async () => {
+    const { key, joinResponse } = await newSession();
+    const { el, transport, settle } = await open(`/s/${id}#k=${key}&t=${token}`, joinResponse);
+    const presence = () =>
+      el().querySelector('[data-testid=receiver-presence]')?.textContent?.trim();
+
+    await settle(() => expect(presence()).toBe('Waiting for receiver'));
+    transport.simulatePresence({ receiverConnected: true });
+    await settle(() => expect(presence()).toBe('Receiver connected'));
+  });
+
+  it('explains when the Session is already open in another tab', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const { key } = await newSession();
+      const { el, harness } = await open(`/s/${id}#k=${key}&t=${token}`, () => ({
+        ok: false,
+        error: ErrorCode.RoleTaken,
+      }));
+      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.waitFor(async () => {
+        await harness.fixture.whenStable();
+        expect(el().textContent).toContain('already open in another tab');
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('explains when the link is missing its secrets', async () => {
     const { key } = await newSession();
     const { el } = await open(`/s/${id}#k=${key}`);

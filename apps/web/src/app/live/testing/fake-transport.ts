@@ -1,4 +1,4 @@
-import type { JoinAck, JoinRequest, PublishAck, SealedUpdate } from '@slm/protocol';
+import type { JoinAck, JoinRequest, Presence, PublishAck, SealedUpdate } from '@slm/protocol';
 import type { LiveTransport } from '../transport';
 
 /** In-memory LiveTransport for controller tests. Drive it with the simulate* methods. */
@@ -20,6 +20,7 @@ export class FakeTransport implements LiveTransport {
   private connectHandlers: Array<() => void> = [];
   private disconnectHandlers: Array<() => void> = [];
   private updateHandlers: Array<(update: SealedUpdate) => void> = [];
+  private presenceHandlers: Array<(presence: Presence) => void> = [];
 
   onConnect(handler: () => void): void {
     this.connectHandlers.push(handler);
@@ -29,6 +30,9 @@ export class FakeTransport implements LiveTransport {
   }
   onUpdate(handler: (update: SealedUpdate) => void): void {
     this.updateHandlers.push(handler);
+  }
+  onPresence(handler: (presence: Presence) => void): void {
+    this.presenceHandlers.push(handler);
   }
   async join(request: JoinRequest): Promise<JoinAck> {
     this.joins.push(request);
@@ -56,5 +60,8 @@ export class FakeTransport implements LiveTransport {
   }
   simulateUpdate(update: SealedUpdate): void {
     this.updateHandlers.forEach((h) => h(update));
+  }
+  simulatePresence(presence: Presence): void {
+    this.presenceHandlers.forEach((h) => h(presence));
   }
 }

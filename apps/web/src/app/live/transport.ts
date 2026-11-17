@@ -1,5 +1,5 @@
 import { InjectionToken } from '@angular/core';
-import type { JoinAck, JoinRequest, PublishAck, SealedUpdate } from '@slm/protocol';
+import type { JoinAck, JoinRequest, Presence, PublishAck, SealedUpdate } from '@slm/protocol';
 import { socketIoTransport } from './socket-io-transport';
 
 /**
@@ -11,6 +11,7 @@ export interface LiveTransport {
   onConnect(handler: () => void): void;
   onDisconnect(handler: () => void): void;
   onUpdate(handler: (update: SealedUpdate) => void): void;
+  onPresence(handler: (presence: Presence) => void): void;
   join(request: JoinRequest): Promise<JoinAck>;
   /** Rejects if the server does not acknowledge in time or the connection drops. */
   publish(update: SealedUpdate): Promise<PublishAck>;

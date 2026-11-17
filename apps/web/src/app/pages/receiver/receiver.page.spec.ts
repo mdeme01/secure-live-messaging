@@ -94,6 +94,26 @@ describe('ReceiverPage', () => {
     );
   });
 
+  it('explains when the Session already has a Receiver', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const { encoded } = await generateSessionKey();
+      const { harness, el } = await open(`/r/${id}#k=${encoded}`, () => ({
+        ok: false,
+        error: ErrorCode.RoleTaken,
+      }));
+      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.waitFor(async () => {
+        await harness.fixture.whenStable();
+        expect(el().querySelector('[role=alert]')?.textContent).toContain(
+          'This session already has a receiver',
+        );
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('explains a link without its key', async () => {
     const { el } = await open(`/r/${id}`);
     expect(el().querySelector('[role=alert]')?.textContent).toContain('invalid or incomplete');

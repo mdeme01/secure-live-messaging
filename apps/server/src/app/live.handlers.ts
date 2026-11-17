@@ -10,6 +10,7 @@ import {
   type Role,
   type ServerToClientEvents,
 } from '@slm/protocol';
+import { RoleSlots } from './role-slots';
 import type { SessionStore } from './session-store';
 
 /** What the server remembers about a socket once it has joined. */
@@ -29,29 +30,63 @@ export type LiveServer = SocketServer<
 export const sessionRoom = (sessionId: string) => `session:${sessionId}`;
 
 export function registerLiveHandlers(io: LiveServer, store: SessionStore): void {
+  const slots = new RoleSlots();
+
+  const notifySender = (sessionId: string) => {
+    const sender = slots.holder(sessionId, 'sender');
+    if (sender) io.to(sender).emit(SocketEvent.Presence, presenceOf(sessionId));
+  };
+  const presenceOf = (sessionId: string) => ({
+    receiverConnected: slots.holder(sessionId, 'receiver') !== undefined,
+  });
+
   io.on('connection', (socket) => {
     const { senderToken } = (socket.handshake.auth ?? {}) as HandshakeAuth;
+
+    /** Gives up whatever role this socket held, telling the Sender if a Receiver left. */
+    const leaveCurrent = () => {
+      const { sessionId, role } = socket.data;
+      if (!sessionId || !role) return;
+      void socket.leave(sessionRoom(sessionId));
+      socket.data = {};
+      if (slots.release(sessionId, role, socket.id) && role === 'receiver') notifySender(sessionId);
+    };
 
     socket.on(SocketEvent.Join, (request, ack) => {
       if (typeof ack !== 'function') return;
       if (!isJoinRequest(request)) return ack({ ok: false, error: ErrorCode.InvalidPayload });
 
-      const session = store.get(request.sessionId);
+      const { sessionId, role } = request;
+      const session = store.get(sessionId);
       if (!session) return ack({ ok: false, error: ErrorCode.SessionNotFound });
       if (
-        request.role === 'sender' &&
-        !(isSenderToken(senderToken) && store.isSender(request.sessionId, senderToken))
+        role === 'sender' &&
+        !(isSenderToken(senderToken) && store.isSender(sessionId, senderToken))
       ) {
         return ack({ ok: false, error: ErrorCode.Unauthorized });
       }
 
-      const previous = socket.data.sessionId;
-      if (previous && previous !== request.sessionId) void socket.leave(sessionRoom(previous));
-      socket.data = { sessionId: request.sessionId, role: request.role };
-      store.touch(request.sessionId);
-      void socket.join(sessionRoom(request.sessionId));
-      ack({ ok: true, latest: session.latest });
+      const rejoin = socket.data.sessionId === sessionId && socket.data.role === role;
+      if (!rejoin && slots.holder(sessionId, role) !== undefined) {
+        return ack({ ok: false, error: ErrorCode.RoleTaken });
+      }
+      if (!rejoin) {
+        leaveCurrent();
+        slots.claim(sessionId, role, socket.id);
+        socket.data = { sessionId, role };
+        void socket.join(sessionRoom(sessionId));
+      }
+      store.touch(sessionId);
+
+      if (role === 'sender') {
+        ack({ ok: true, latest: session.latest, presence: presenceOf(sessionId) });
+      } else {
+        ack({ ok: true, latest: session.latest });
+        if (!rejoin) notifySender(sessionId);
+      }
     });
+
+    socket.on('disconnect', leaveCurrent);
 
     socket.on(SocketEvent.Publish, (update, ack) => {
       if (typeof ack !== 'function') return;

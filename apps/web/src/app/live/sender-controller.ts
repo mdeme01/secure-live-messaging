@@ -7,6 +7,7 @@ import {
   type SenderLink,
 } from '@slm/crypto';
 import { ErrorCode } from '@slm/protocol';
+import { FIRST_JOIN_RETRY_DELAYS_MS, joinSession, REJOIN_RETRY_DELAYS_MS } from './join-session';
 import type { LiveTransport } from './transport';
 
 /** Typing pause before an edit is encrypted and sent. */
@@ -23,9 +24,15 @@ export type SenderStatus =
   // Terminal: the controller has stopped and closed the transport.
   | 'not-found'
   | 'unauthorized'
+  | 'role-taken'
   | 'unverifiable';
 
-const TERMINAL: ReadonlySet<SenderStatus> = new Set(['not-found', 'unauthorized', 'unverifiable']);
+const TERMINAL: ReadonlySet<SenderStatus> = new Set([
+  'not-found',
+  'unauthorized',
+  'role-taken',
+  'unverifiable',
+]);
 
 export interface SenderControllerDeps {
   link: SenderLink;
@@ -36,6 +43,7 @@ export interface SenderControllerDeps {
 const JOIN_ERROR_STATUS: Partial<Record<ErrorCode, SenderStatus>> = {
   [ErrorCode.SessionNotFound]: 'not-found',
   [ErrorCode.Unauthorized]: 'unauthorized',
+  [ErrorCode.RoleTaken]: 'role-taken',
 };
 
 /**
@@ -52,6 +60,8 @@ export class SenderController {
   readonly editable = signal(false);
   /** When the server last acknowledged an Update from this tab (Sender's clock). */
   readonly lastSentAt = signal<Date | null>(null);
+  /** Whether a Receiver is connected right now, as last reported by the server. */
+  readonly receiverConnected = signal(false);
 
   private readonly link: SenderLink;
   private readonly transport: LiveTransport;
@@ -61,6 +71,7 @@ export class SenderController {
   private serverText: string | null = null;
   private nextSeq = 0;
   private joined = false;
+  private hasJoined = false;
   private inFlight = false;
   /** Set after a resync with the server; a second stale/lost ack in a row is reported, not retried. */
   private resynced = false;
@@ -84,9 +95,13 @@ export class SenderController {
     }
     if (this.disposed) return;
     this.transport.onConnect(() => void this.join(++this.connection));
+    this.transport.onPresence(({ receiverConnected }) =>
+      this.receiverConnected.set(receiverConnected),
+    );
     this.transport.onDisconnect(() => {
       this.connection++;
       this.joined = false;
+      this.receiverConnected.set(false); // Unknown until we rejoin.
       this.inFlight = false; // Abandoned; the rejoin tells us whether it landed.
       if (!this.stopped()) this.status.set(this.editable() ? 'offline' : 'connecting');
     });
@@ -121,7 +136,12 @@ export class SenderController {
     if (!this.key) return;
     let ack;
     try {
-      ack = await this.transport.join({ sessionId: this.link.sessionId, role: 'sender' });
+      ack = await joinSession(
+        this.transport,
+        { sessionId: this.link.sessionId, role: 'sender' },
+        this.hasJoined ? REJOIN_RETRY_DELAYS_MS : FIRST_JOIN_RETRY_DELAYS_MS,
+        () => connection === this.connection && !this.stopped(),
+      );
     } catch {
       if (connection === this.connection && this.resynced) {
         // A resync that got no answer: let the next edit try again.
@@ -130,8 +150,10 @@ export class SenderController {
       }
       return; // Otherwise the next reconnect joins again.
     }
-    if (connection !== this.connection) return;
+    if (!ack) return;
     if (!ack.ok) return this.stop(JOIN_ERROR_STATUS[ack.error] ?? 'error');
+    this.hasJoined = true;
+    if (ack.presence) this.receiverConnected.set(ack.presence.receiverConnected);
 
     const result = await openUpdate(this.key, this.link.sessionId, null, ack.latest);
     if (connection !== this.connection) return;

@@ -35,6 +35,13 @@ const STATUS_LABEL: Partial<Record<SenderStatus, string>> = {
         <h1 class="text-xl font-semibold">This sender link isn't valid for this session</h1>
         <p class="mt-2">Make sure you copied the whole Sender Link.</p>
       </section>
+    } @else if (controller.status() === 'role-taken') {
+      <section role="alert" class="rounded-2xl border border-slate-200 bg-white p-8">
+        <h1 class="text-xl font-semibold">This session is already open in another tab</h1>
+        <p class="mt-2 text-slate-600">
+          Only one editor can be connected at a time. Close the other tab and reload this page.
+        </p>
+      </section>
     } @else if (controller.status() === 'unverifiable') {
       <section role="alert" class="rounded-2xl border border-red-200 bg-red-50 p-8 text-red-900">
         <h1 class="text-xl font-semibold">The current message couldn't be verified</h1>
@@ -45,7 +52,23 @@ const STATUS_LABEL: Partial<Record<SenderStatus, string>> = {
       </section>
     } @else {
       <section class="space-y-6 rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
-        <h1 class="text-2xl font-semibold tracking-tight">Your session</h1>
+        <div class="flex items-center justify-between">
+          <h1 class="text-2xl font-semibold tracking-tight">Your session</h1>
+          <span
+            data-testid="receiver-presence"
+            class="inline-flex items-center gap-2 text-sm"
+            [class.text-emerald-700]="controller.receiverConnected()"
+            [class.text-slate-500]="!controller.receiverConnected()"
+          >
+            <span
+              aria-hidden="true"
+              class="size-2 rounded-full"
+              [class.bg-emerald-500]="controller.receiverConnected()"
+              [class.bg-slate-300]="!controller.receiverConnected()"
+            ></span>
+            {{ controller.receiverConnected() ? 'Receiver connected' : 'Waiting for receiver' }}
+          </span>
+        </div>
         <div>
           <label for="message" class="mb-1 block text-sm font-medium text-slate-700">Message</label>
           <textarea

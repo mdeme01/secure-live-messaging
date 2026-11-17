@@ -1,6 +1,7 @@
 import { generateSessionKey, MAX_MESSAGE_BYTES, openUpdate, sealUpdate } from '@slm/crypto';
 import { ErrorCode, type PublishAck, type SealedUpdate } from '@slm/protocol';
 import { SenderController, DEBOUNCE_MS } from './sender-controller';
+import { FIRST_JOIN_RETRY_DELAYS_MS } from './join-session';
 import { FakeTransport } from './testing/fake-transport';
 
 const SESSION_ID = 'abcDEF0123456789_-xyzA';
@@ -206,6 +207,7 @@ describe('SenderController', () => {
   it.each([
     [ErrorCode.SessionNotFound, 'not-found'],
     [ErrorCode.Unauthorized, 'unauthorized'],
+    [ErrorCode.RoleTaken, 'role-taken'],
   ] as const)('reports a %s join rejection', async (error, status) => {
     const transport = new FakeTransport();
     transport.joinResponse = () => ({ ok: false, error });
@@ -215,6 +217,7 @@ describe('SenderController', () => {
       transport,
     });
     await controller.start();
+    await vi.advanceTimersByTimeAsync(FIRST_JOIN_RETRY_DELAYS_MS[0]);
     await vi.waitFor(() => expect(controller.status()).toBe(status));
     expect(transport.closed).toBe(true);
   });
@@ -330,5 +333,47 @@ describe('SenderController', () => {
     await vi.waitFor(() => expect(controller.lastSentAt()).not.toBeNull());
     expect(controller.status()).toBe('too-long');
     expect(transport.published).toHaveLength(1);
+  });
+
+  it('shows whether a Receiver is connected, from the join ack and live presence', async () => {
+    const { controller, transport } = await setup();
+    expect(controller.receiverConnected()).toBe(false);
+
+    transport.simulatePresence({ receiverConnected: true });
+    expect(controller.receiverConnected()).toBe(true);
+    transport.simulatePresence({ receiverConnected: false });
+    expect(controller.receiverConnected()).toBe(false);
+  });
+
+  it('takes Receiver presence from the join ack', async () => {
+    const { encoded, key } = await generateSessionKey();
+    const latest = await sealUpdate(key, SESSION_ID, 0, '');
+    const transport = new FakeTransport();
+    transport.joinResponse = () => ({ ok: true, latest, presence: { receiverConnected: true } });
+    const controller = new SenderController({
+      link: { sessionId: SESSION_ID, sessionKey: encoded, senderToken: TOKEN },
+      transport,
+    });
+    await controller.start();
+    await vi.waitFor(() => expect(controller.receiverConnected()).toBe(true));
+
+    transport.simulateDisconnect();
+    expect(controller.receiverConnected()).toBe(false);
+  });
+
+  it('retries a rejoin while its previous connection still holds the Sender slot', async () => {
+    const { controller, transport } = await setup();
+    const latestAck = transport.joinResponse;
+    let refusals = 2;
+    transport.joinResponse = (request) =>
+      refusals-- > 0 ? { ok: false, error: ErrorCode.RoleTaken } : latestAck(request);
+
+    transport.simulateDisconnect();
+    transport.simulateConnect();
+    await vi.advanceTimersByTimeAsync(1_000 + 2_000);
+
+    await vi.waitFor(() => expect(controller.status()).toBe('ready'));
+    expect(transport.joins).toHaveLength(4);
+    expect(transport.closed).toBe(false);
   });
 });

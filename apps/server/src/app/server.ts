@@ -3,6 +3,7 @@ import { Server as SocketServer } from 'socket.io';
 import {
   ErrorCode,
   HEALTH_PATH,
+  HEARTBEAT,
   LIMITS,
   PROTOCOL_VERSION,
   SOCKET_PATH,
@@ -55,6 +56,8 @@ export function buildServer(options: ServerOptions = {}): AppServer {
   const io: LiveServer = new SocketServer(http.server, {
     path: SOCKET_PATH,
     serveClient: false,
+    pingInterval: HEARTBEAT.pingIntervalMs,
+    pingTimeout: HEARTBEAT.pingTimeoutMs,
   });
 
   http.get(HEALTH_PATH, async (): Promise<HealthResponse> => ({
