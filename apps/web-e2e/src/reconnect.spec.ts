@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { controllableNetwork } from './support/network';
+import { controllableNetwork, countServerAcks, RECONNECT_TIMEOUT_MS } from './support/network';
 import { createSession } from './support/session';
 
 test('edits made while the Sender is offline reach the Receiver on reconnect', async ({
@@ -18,15 +18,15 @@ test('edits made while the Sender is offline reach the Receiver on reconnect', a
   await editor.fill('before the drop');
   await expect(receiver.getByTestId('message')).toHaveText('before the drop');
 
-  network.drop();
-  await expect(status).toContainText('Offline');
+  await network.drop();
+  await expect(status).toHaveText('Offline: changes will be sent on reconnect.');
   await editor.fill('typed while offline');
   await editor.fill('typed while offline, then edited');
   await expect(receiver.getByTestId('message')).toHaveText('before the drop');
 
   network.restore();
   await expect(receiver.getByTestId('message')).toHaveText('typed while offline, then edited', {
-    timeout: 15_000,
+    timeout: RECONNECT_TIMEOUT_MS,
   });
   await expect(status).toHaveText(/Sent at \d{2}:\d{2}:\d{2}/);
 
@@ -39,6 +39,7 @@ test('a Receiver that loses its connection catches up on reconnect without a fal
 }) => {
   const senderContext = await browser.newContext();
   const sender = await senderContext.newPage();
+  const senderAcks = countServerAcks(sender);
   const session = await createSession(sender);
   const editor = sender.getByTestId('editor');
 
@@ -49,13 +50,17 @@ test('a Receiver that loses its connection catches up on reconnect without a fal
   await editor.fill('first');
   await expect(receiver.getByTestId('message')).toHaveText('first');
 
-  network.drop();
+  await network.drop();
   await expect(receiver.getByTestId('receiver-status')).toHaveText('Reconnecting…');
+  const acksBefore = senderAcks();
   await editor.fill('sent while the receiver was away');
-  await expect(sender.getByTestId('sender-status')).toHaveText(/Sent at/);
+  // The server has stored it before the Receiver is back, so the Receiver must catch up on join.
+  await expect.poll(senderAcks).toBeGreaterThan(acksBefore);
 
   network.restore();
-  await expect(receiver.getByTestId('receiver-status')).toHaveText('Live', { timeout: 15_000 });
+  await expect(receiver.getByTestId('receiver-status')).toHaveText('Live', {
+    timeout: RECONNECT_TIMEOUT_MS,
+  });
   await expect(receiver.getByTestId('message')).toHaveText('sent while the receiver was away');
   await expect(receiver.getByTestId('integrity-banner')).toHaveCount(0);
 

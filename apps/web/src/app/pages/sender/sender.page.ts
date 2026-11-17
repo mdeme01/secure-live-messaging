@@ -10,7 +10,7 @@ const STATUS_LABEL: Partial<Record<SenderStatus, string>> = {
   connecting: 'Connecting…',
   ready: 'Live. The receiver sees what you type.',
   sending: 'Sending…',
-  offline: 'Offline. Your edits will be sent when the connection is back.',
+  offline: 'Offline: changes will be sent on reconnect.',
   error: "Couldn't send the last change. Keep typing to retry.",
 };
 

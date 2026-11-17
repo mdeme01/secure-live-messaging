@@ -1,7 +1,7 @@
 import { generateSessionKey, MAX_MESSAGE_BYTES, openUpdate, sealUpdate } from '@slm/crypto';
 import { ErrorCode, type PublishAck, type SealedUpdate } from '@slm/protocol';
 import { SenderController, DEBOUNCE_MS } from './sender-controller';
-import { FIRST_JOIN_RETRY_DELAYS_MS } from './join-session';
+import { FIRST_JOIN_RETRY_DELAYS_MS, UNANSWERED_JOIN_RETRY_MS } from './join-session';
 import { FakeTransport } from './testing/fake-transport';
 
 const SESSION_ID = 'abcDEF0123456789_-xyzA';
@@ -159,6 +159,31 @@ describe('SenderController', () => {
     await vi.waitFor(() => expect(controller.status()).toBe('sent'));
     expect(await texts()).toEqual(['typed while offline']);
     expect(controller.text()).toBe('typed while offline');
+  });
+
+  it('retries a join that got no answer while the connection stayed up', async () => {
+    const { controller, transport, texts } = await setup();
+    const answer = transport.joinResponse;
+    let unanswered = true;
+    transport.joinResponse = (request) => {
+      if (!unanswered) return answer(request);
+      unanswered = false;
+      throw new Error('operation has timed out');
+    };
+    transport.simulateDisconnect();
+    controller.setText('typed while offline');
+    transport.simulateConnect();
+    await vi.advanceTimersByTimeAsync(UNANSWERED_JOIN_RETRY_MS);
+    await vi.waitFor(() => expect(controller.status()).toBe('sent'));
+    expect(transport.joins).toHaveLength(3);
+    expect(await texts()).toEqual(['typed while offline']);
+  });
+
+  it('keeps the too-long warning while offline', async () => {
+    const { controller, transport } = await setup();
+    controller.setText('é'.repeat(MAX_MESSAGE_BYTES / 2 + 1));
+    transport.simulateDisconnect();
+    expect(controller.status()).toBe('too-long');
   });
 
   it('abandons a publish cut off by a disconnect and continues from the server’s state', async () => {

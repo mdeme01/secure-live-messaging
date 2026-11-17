@@ -25,3 +25,9 @@ export async function joinSession(
     if (!isCurrent()) return null;
   }
 }
+
+/**
+ * A join can go unanswered (ack timeout) while the connection stays up, so no reconnect
+ * will trigger a new one: try again after this pause.
+ */
+export const UNANSWERED_JOIN_RETRY_MS = 1_000;
